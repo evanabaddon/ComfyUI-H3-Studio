@@ -566,15 +566,21 @@ def build_local_fallback_h3_prompt(
         for c in ref_bundle.get("characters", []):
             st = c["subject_tag"]
             pt = c["picture_tag"]
+            name_alias = (c.get("name") or "").strip()
             traits = c.get("visual_traits") or "the character with distinct facial features and attire"
             ret = c.get("retention", "fully_preserved")
             subj_defs.append(f"{st} is {traits} in {pt}.")
             ret_lines.append(f"{st} (appears in [Shot 1]): {ret} - character identity, facial features, and clothing are preserved.")
+            if name_alias:
+                idea_clean = re.sub(rf"\b{re.escape(name_alias)}\b", st, idea_clean, flags=re.IGNORECASE)
             if c.get("audio_tag"):
                 at = c["audio_tag"]
                 spk = c.get("speaker_id", "S1")
                 subj_defs.append(f"{at} is the voice-timbre reference for {st} ({spk}).")
                 ret_lines.append(f"{at}: reference - vocal timbre guides the spoken delivery of {st} without copying the raw signal.")
+        if "<Subject " not in idea_clean and ref_bundle.get("characters"):
+            first_st = ref_bundle["characters"][0]["subject_tag"]
+            idea_clean = f"{first_st} — {idea_clean}"
 
         task_types = ["reference generation"]
         if has_ff:

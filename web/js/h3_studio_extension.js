@@ -81,18 +81,28 @@ function preserveCurrentGraphModelsAndImages() {
   return saved;
 }
 
-function autoRepairGraphWidgets(savedState) {
+function autoRepairGraphWidgets(savedState, templateName = "") {
   if (!app.graph || !app.graph._nodes) return;
   let imgIdx = 0;
+  const isFl2vWorkflow = String(templateName).toLowerCase().includes("i2va") ||
+                         Boolean(findGraphNodeByType("MiniMaxH3ImageToVideo"));
   for (const n of app.graph._nodes) {
     if (n.type === "UNETLoader") {
       const w = findWidget(n, "unet_name") || (n.widgets && n.widgets[0]);
       if (w) {
         const opts = (w.options && Array.isArray(w.options.values) && w.options.values) || [];
-        if (savedState && savedState.unet && (opts.length === 0 || opts.includes(savedState.unet))) {
-          w.value = savedState.unet;
+        const savedUnet = savedState && savedState.unet;
+        const savedMatchesFamily = savedUnet && (
+          isFl2vWorkflow
+            ? String(savedUnet).toLowerCase().includes("fl2v")
+            : String(savedUnet).toLowerCase().includes("ref2v")
+        );
+        if (savedMatchesFamily && (opts.length === 0 || opts.includes(savedUnet))) {
+          w.value = savedUnet;
         } else if (opts.length > 0 && !opts.includes(w.value)) {
-          const match = opts.find((v) => String(v).toLowerCase().includes("h3") && String(v).toLowerCase().includes("ref")) ||
+          const familyKey = isFl2vWorkflow ? "fl2v" : "ref2v";
+          const match = opts.find((v) => String(v).toLowerCase().includes("h3") && String(v).toLowerCase().includes(familyKey)) ||
+                        opts.find((v) => String(v).toLowerCase().includes(familyKey)) ||
                         opts.find((v) => String(v).toLowerCase().includes("h3")) ||
                         opts[0];
           if (match) w.value = match;
@@ -155,7 +165,7 @@ async function loadBundledWorkflow(templateName) {
     const wfJson = await resp.json();
     await app.loadGraphData(wfJson, true, true, templateName);
     setTimeout(() => {
-      autoRepairGraphWidgets(savedState);
+      autoRepairGraphWidgets(savedState, templateName);
     }, 80);
   } catch (err) {
     console.error("[H3 Studio] Failed loading workflow:", err);
@@ -656,6 +666,28 @@ function createNLEStudioWorkspace() {
       const wUse = findWidget(charNode, "use_character_refs");
       if (wUse) elMasterCharToggle.checked = Boolean(wUse.value);
       if (charNode._h3RenderNLEChars) charNode._h3RenderNLEChars(elCharCards, elCharCount);
+    } else if (elCharCards) {
+      elCharCards.innerHTML = `
+        <div class="h3-item-card" style="text-align:center; padding:12px;">
+          <div style="color:var(--h3-amber-bright); font-weight:700; margin-bottom:6px;">
+            Ref2VA Multi-Character Node Not Loaded on Canvas
+          </div>
+          <div class="h3-label" style="margin-bottom:8px;">
+            Untuk memakai Karakter dari Character Library (&lt;Subject 1..N&gt;), muat workflow <b>Ref2VA Multi-Char</b> terlebih dahulu.
+          </div>
+          <button type="button" class="h3-btn h3-btn-primary" data-action="quick-load-ref2v" style="width:100%; padding:7px;">
+            Load Ref2VA Multi-Character Workflow Now
+          </button>
+        </div>
+      `;
+      const btnQuickRef = elCharCards.querySelector('[data-action="quick-load-ref2v"]');
+      if (btnQuickRef) {
+        btnQuickRef.addEventListener("click", async () => {
+          await loadBundledWorkflow("H3_Ref2VA_MultiCharacter_Studio.json");
+          activateRightTab("single");
+          setTimeout(pullFromCanvasNodes, 250);
+        });
+      }
     }
 
     // 2. Sync from H3ModelSpeedAndLoraHub
@@ -1709,8 +1741,14 @@ function createNLEStudioWorkspace() {
     updateCalcBadge();
     pushToCanvasPromptNode();
   });
-  elUserIdea.addEventListener("input", pushToCanvasPromptNode);
-  elH3Mode.addEventListener("change", pushToCanvasPromptNode);
+  elUserIdea.addEventListener("input", () => {
+    if (elCompiledPrompt) elCompiledPrompt.value = "";
+    pushToCanvasPromptNode();
+  });
+  elH3Mode.addEventListener("change", () => {
+    if (elCompiledPrompt) elCompiledPrompt.value = "";
+    pushToCanvasPromptNode();
+  });
   elOllamaUrl.addEventListener("input", pushToCanvasPromptNode);
   elOllamaModel.addEventListener("change", pushToCanvasPromptNode);
   elCompiledPrompt.addEventListener("input", pushToCanvasPromptNode);
@@ -2461,6 +2499,13 @@ function setupCharacterHubNodeUI(node) {
             if (found.voice_desc) cfg.voice_desc = found.voice_desc;
           }
         }
+        const promptNode = findGraphNodeByType("H3AIPromptComposer");
+        if (promptNode) {
+          const wGen = findWidget(promptNode, "generated_h3_prompt");
+          if (wGen) wGen.value = "";
+        }
+        const elComp = document.querySelector('[data-nle="compiled-prompt"]');
+        if (elComp) elComp.value = "";
         renderCharCardsInto(elCharList);
         if (targetContainer !== elCharList) renderCharCardsInto(targetContainer, badgeOverride);
       });
@@ -2776,6 +2821,15 @@ function setupPromptComposerNodeUI(node) {
     try {
       const extNode = findGraphNodeByType("H3InteractiveVideoExtender");
       const charNode = findGraphNodeByType("H3CharacterReferenceHub");
+      let liveCharConfigs = null;
+      let useCharRefsFlag = true;
+      if (charNode) {
+        if (typeof charNode._h3GetCharConfigs === "function") {
+          liveCharConfigs = charNode._h3GetCharConfigs();
+        }
+        const wUse = findWidget(charNode, "use_character_refs");
+        if (wUse !== undefined) useCharRefsFlag = Boolean(wUse.value);
+      }
       const payload = {
         user_idea: wUserIdea ? wUserIdea.value : "",
         mode: wMode ? wMode.value : "Auto",
@@ -2787,6 +2841,8 @@ function setupPromptComposerNodeUI(node) {
         dialogue_lines: dialogueLines,
         extender_node_id: extNode ? String(extNode.id) : "latest",
         char_node_id: charNode ? String(charNode.id) : null,
+        characters_config: liveCharConfigs,
+        use_character_refs: useCharRefsFlag,
         auto_continue_story: Boolean(autoContinueStory),
       };
 

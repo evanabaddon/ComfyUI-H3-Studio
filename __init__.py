@@ -128,6 +128,57 @@ try:
         if ref_bundle is None and char_node_id and str(char_node_id) in store.character_previews:
             ref_bundle = store.character_previews[str(char_node_id)]
 
+        # If live characters_config from UI is provided, build a fresh ref_bundle immediately
+        # so newly selected Saved Character Sheets work even before the node has executed once!
+        char_configs_live = data.get("characters_config", None)
+        use_char_refs_live = bool(data.get("use_character_refs", True))
+        if isinstance(char_configs_live, list) and len(char_configs_live) > 0:
+            from .nodes.character_maker_node import load_saved_character_image_tensor
+            from .nodes.session_store import tensor_to_base64_jpeg
+
+            ext_session_tmp = (
+                store.get_node_session(str(extender_node_id))
+                if extender_node_id
+                else store.get_active_or_latest_session()
+            )
+            has_ff_tmp = ext_session_tmp.get_total_active_frames() > 0
+            pic_offset = 1 if has_ff_tmp else 0
+            live_chars = []
+            live_b64 = []
+            subj_idx = 0
+            for idx_c, cfg_c in enumerate(char_configs_live):
+                if not isinstance(cfg_c, dict) or not cfg_c.get("enabled", False):
+                    continue
+                subj_idx += 1
+                pic_offset += 1
+                saved_id = str(cfg_c.get("saved_character_id", "")).strip()
+                tb_c = None
+                if saved_id:
+                    t_img = load_saved_character_image_tensor(saved_id)
+                    if t_img is not None:
+                        tb_c = tensor_to_base64_jpeg(t_img, index=0, max_side=384)
+                        if tb_c:
+                            live_b64.append(tb_c)
+                live_chars.append({
+                    "slot": int(cfg_c.get("slot", idx_c + 1)),
+                    "subject_tag": f"<Subject {subj_idx}>",
+                    "picture_tag": f"<Picture {min(5, pic_offset)}>",
+                    "audio_tag": "",
+                    "name": str(cfg_c.get("name", f"Char{subj_idx}")).strip() or f"Char{subj_idx}",
+                    "visual_traits": str(cfg_c.get("visual_traits", "")).strip() or "the character shown in the turnaround reference sheet",
+                    "retention": str(cfg_c.get("retention", "fully_preserved")),
+                    "speaker_id": str(cfg_c.get("speaker_id", f"S{subj_idx}")).strip().lstrip("(").rstrip(")"),
+                    "voice_desc": str(cfg_c.get("voice_desc", "natural clear voice")).strip(),
+                    "thumb_b64": tb_c,
+                })
+            if use_char_refs_live and len(live_chars) > 0:
+                ref_bundle = {
+                    "enabled": True,
+                    "has_first_frame_anchor": has_ff_tmp,
+                    "characters": live_chars,
+                    "base64_thumbnails": live_b64,
+                }
+
         ext_session = (
             store.get_node_session(str(extender_node_id))
             if extender_node_id
