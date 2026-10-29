@@ -85,15 +85,19 @@ function createNLEStudioWorkspace() {
       <!-- Top Header Bar -->
       <header class="h3-nle-topbar">
         <div class="h3-nle-brand">
-          <span class="h3-nle-brand-mark">H3 NLE</span>
-          <span class="h3-nle-brand-title">MINIMAX-H3 MULTI-MODAL VIDEO EXTENDER &amp; SCRIPT DECK</span>
-          <span class="h3-badge" data-nle="sync-badge">Canvas Linked</span>
+          <span class="h3-nle-brand-mark">H3 STUDIO</span>
+          <span class="h3-nle-brand-title">MINIMAX-H3 OMNI-MODAL NLE &amp; EPISODE DIRECTOR</span>
+          <span class="h3-badge h3-badge-green" data-nle="sync-badge">Canvas Linked</span>
         </div>
         <div class="h3-nle-topbar-actions">
-          <button type="button" class="h3-btn" data-nle="load-i2v">Load I2VA Workflow</button>
-          <button type="button" class="h3-btn" data-nle="load-ref2v">Load Ref2VA Multi-Char</button>
-          <button type="button" class="h3-btn h3-btn-accent" data-nle="load-charmaker" title="Open H3 360° Character Sheet Maker Workflow (from Real Face Photo)">Load Character Maker</button>
-          <button type="button" class="h3-btn h3-btn-primary" data-nle="queue-now">Queue Generation in ComfyUI</button>
+          <div class="h3-nle-preset-group" title="Load Bundled ComfyUI Workflow Templates">
+            <button type="button" class="h3-btn" data-nle="load-i2v">I2VA Extender</button>
+            <button type="button" class="h3-btn" data-nle="load-ref2v">Ref2VA Multi-Char</button>
+            <button type="button" class="h3-btn h3-btn-accent" data-nle="load-charmaker">360° Character Maker</button>
+          </div>
+          <button type="button" class="h3-btn h3-btn-primary" data-nle="queue-now" style="padding:7px 14px;">
+            Queue Generation in ComfyUI
+          </button>
           <button type="button" class="h3-btn h3-btn-danger" data-nle="close-modal">Close [Esc]</button>
         </div>
       </header>
@@ -103,46 +107,66 @@ function createNLEStudioWorkspace() {
         <!-- LEFT PANE: Character Casting & Unlimited LoRA Rack -->
         <section class="h3-nle-pane">
           <div class="h3-nle-pane-header">
-            <span class="h3-nle-pane-title">1. Character Casting &amp; LoRA Rack</span>
+            <span class="h3-nle-pane-title">
+              <span class="h3-nle-step-num">1</span>
+              <span>Casting &amp; Model Engine</span>
+            </span>
             <label class="h3-label" style="display:flex; align-items:center; gap:5px; cursor:pointer;">
               <input type="checkbox" class="h3-toggle" data-nle="master-char-toggle" checked />
-              <span>Ref2VA Mode</span>
+              <span>Ref2VA Active</span>
             </label>
           </div>
           <div class="h3-nle-pane-body">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span class="h3-label">CHARACTER ROSTER (&lt;Subject 1..N&gt;)</span>
-              <div style="display:flex; gap:5px; align-items:center;">
+            <!-- Sub-Tabs inside Left Pane so Character Roster & LoRA Stack never crowd each other -->
+            <div class="h3-segmented-tabs">
+              <button type="button" class="h3-seg-tab active" data-nle="left-tab-chars">
+                <span>Characters</span>
                 <span class="h3-badge h3-badge-green" data-nle="char-active-count">1 Active</span>
-                <button type="button" class="h3-btn h3-btn-primary" data-nle="add-character" title="Add New Character to Story Roster">+ Add Char</button>
-              </div>
+              </button>
+              <button type="button" class="h3-seg-tab" data-nle="left-tab-loras">
+                <span>LoRA &amp; Speed</span>
+              </button>
             </div>
-            <div class="h3-list-container" data-nle="char-cards" style="max-height:290px;"></div>
 
-            <div style="border-top:1px solid var(--h3-border-hairline); padding-top:10px; display:flex; justify-content:space-between; align-items:center;">
-              <span class="h3-label">UNLIMITED DYNAMIC LoRA STACK</span>
-              <button type="button" class="h3-btn h3-btn-primary" data-nle="add-lora">+ Add LoRA</button>
+            <!-- Left View A: Character Roster (<Subject 1..N>) -->
+            <div data-nle="left-view-chars" style="display:flex; flex-direction:column; gap:10px; flex:1; min-height:0;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="h3-label">CHARACTER ROSTER (&lt;Subject 1..N&gt;)</span>
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="add-character" title="Add New Character Slot">+ Add Character</button>
+              </div>
+              <div class="h3-list-container" data-nle="char-cards" style="flex:1; min-height:260px;"></div>
             </div>
-            <div class="h3-item-row">
-              <span class="h3-label">Fast Attention:</span>
-              <select class="h3-select" data-nle="attn-select" style="flex:1;">
-                <option value="auto (SageAttn -> FlashAttn2 -> SDPA)">auto (SageAttn -&gt; FlashAttn2 -&gt; SDPA)</option>
-                <option value="sage_attention">sage_attention</option>
-                <option value="flash_attention_2">flash_attention_2</option>
-                <option value="xformers">xformers</option>
-                <option value="pytorch_sdpa">pytorch_sdpa</option>
-                <option value="comfy_default (no_override)">comfy_default (no_override)</option>
-              </select>
+
+            <!-- Left View B: Unlimited Dynamic LoRA Stack & Fast Attention -->
+            <div data-nle="left-view-loras" style="display:none; flex-direction:column; gap:10px; flex:1; min-height:0;">
+              <div class="h3-section-box">
+                <span class="h3-label">ATTENTION ACCELERATION BACKEND</span>
+                <select class="h3-select" data-nle="attn-select" style="width:100%;">
+                  <option value="auto (SageAttn -> FlashAttn2 -> SDPA)">auto (SageAttn -&gt; FlashAttn2 -&gt; SDPA)</option>
+                  <option value="sage_attention">sage_attention</option>
+                  <option value="flash_attention_2">flash_attention_2</option>
+                  <option value="xformers">xformers</option>
+                  <option value="pytorch_sdpa">pytorch_sdpa</option>
+                  <option value="comfy_default (no_override)">comfy_default (no_override)</option>
+                </select>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="h3-label">UNLIMITED DYNAMIC LoRA STACK</span>
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="add-lora">+ Add LoRA</button>
+              </div>
+              <div class="h3-list-container" data-nle="lora-cards" style="flex:1; min-height:240px;"></div>
             </div>
-            <div class="h3-list-container" data-nle="lora-cards" style="max-height:220px;"></div>
           </div>
         </section>
 
         <!-- CENTER PANE: Cinema Program Monitor & Multi-Track Timeline -->
         <section class="h3-nle-pane">
           <div class="h3-nle-pane-header">
-            <span class="h3-nle-pane-title">2. Program Monitor &amp; Seamless Seam Editor</span>
-            <div style="display:flex; gap:6px;">
+            <span class="h3-nle-pane-title">
+              <span class="h3-nle-step-num">2</span>
+              <span>Program Monitor &amp; Seam Timeline</span>
+            </span>
+            <div style="display:flex; gap:6px; align-items:center;">
               <span class="h3-badge" data-nle="seg-pill">0 Segments</span>
               <span class="h3-badge h3-badge-amber" data-nle="total-dur-pill">0f (0.00s)</span>
             </div>
@@ -150,8 +174,8 @@ function createNLEStudioWorkspace() {
           <div class="h3-nle-pane-body">
             <figure class="h3-monitor-stage" style="margin:0;">
               <div class="h3-viewport-empty" data-nle="monitor-empty">
-                No video segments in timeline yet.<br/>
-                Run a generation or load a workflow to scrub frames, trim end-of-clip degradation, and lock your First-Frame Reference (&lt;Picture 1&gt;).
+                <div style="font-weight:700; color:var(--h3-text-secondary); margin-bottom:4px;">NO VIDEO SEGMENTS IN TIMELINE YET</div>
+                Run a generation or load a workflow to scrub frames, play 24fps video + 32kHz stereo audio, trim tail degradation, and lock your First-Frame Reference (&lt;Picture 1&gt;).
               </div>
               <img data-nle="monitor-img" style="display:none;" alt="Program Monitor Frame" />
               <div class="h3-monitor-hud-top">
@@ -172,19 +196,19 @@ function createNLEStudioWorkspace() {
                 <span class="h3-label" style="font-family:var(--h3-font-mono);">OUT</span>
               </div>
               <div class="h3-transport-controls">
-                <div style="display:flex; gap:4px;">
+                <div style="display:flex; gap:5px; align-items:center;">
                   <button type="button" class="h3-btn" data-nle="jump-start" title="Jump to Start">|&lt;</button>
                   <button type="button" class="h3-btn" data-nle="step-prev" title="Step Back 1 Frame">-1f</button>
-                  <button type="button" class="h3-btn h3-btn-accent" data-nle="play-toggle" style="min-width:64px;">Play</button>
+                  <button type="button" class="h3-btn h3-btn-accent" data-nle="play-toggle" style="min-width:72px;">Play</button>
                   <button type="button" class="h3-btn" data-nle="step-next" title="Step Forward 1 Frame">+1f</button>
                   <button type="button" class="h3-btn" data-nle="jump-end" title="Jump to Last Frame">&gt;|</button>
                 </div>
-                <div style="display:flex; gap:5px;">
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
                   <button type="button" class="h3-btn h3-btn-primary" data-nle="lock-extend">
                     Lock Playhead as First-Frame Ref &amp; Trim Out
                   </button>
                   <button type="button" class="h3-btn" data-nle="undo-seg" title="Drop Last Segment (Re-roll)">
-                    Undo Last Clip
+                    Undo Clip
                   </button>
                   <button type="button" class="h3-btn h3-btn-danger" data-nle="clear-timeline" title="Reset All Segments">
                     Clear
@@ -195,9 +219,9 @@ function createNLEStudioWorkspace() {
 
             <!-- Multi-Track NLE Timeline (V1 Video + A1 Stereo Audio) -->
             <div class="h3-multitrack-bay">
-              <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span class="h3-label">MULTI-SEGMENT TIMELINE (CLICK ANY SEGMENT TO INSPECT SEAM)</span>
-                <span class="h3-label" style="font-family:var(--h3-font-mono);">Auto-Skip Seam Frame 0: ON | Audio Crossfade: 40ms</span>
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
+                <span class="h3-label">MULTI-SEGMENT TIMELINE (CLICK ANY SEGMENT BLOCK TO INSPECT SEAM)</span>
+                <span class="h3-label" style="font-family:var(--h3-font-mono); color:var(--h3-amber-bright);">Seam Skip: ON | Crossfade: 40ms</span>
               </div>
               <div class="h3-track-lane">
                 <div class="h3-track-header v1">
@@ -224,35 +248,44 @@ function createNLEStudioWorkspace() {
         <!-- RIGHT PANE: AI Director (Single-Shot Deck + Autonomous Multi-Segment Episode Storyboarder) -->
         <section class="h3-nle-pane">
           <div class="h3-nle-pane-header">
-            <div style="display:flex; gap:4px; align-items:center;">
-              <button type="button" class="h3-btn h3-btn-primary" data-nle="tab-single" style="padding:3px 8px; font-size:10px;">
-                Single Segment Deck
-              </button>
-              <button type="button" class="h3-btn" data-nle="tab-episode" style="padding:3px 8px; font-size:10px;">
-                Episode Storyboard (Auto-10m)
-              </button>
-            </div>
+            <span class="h3-nle-pane-title">
+              <span class="h3-nle-step-num">3</span>
+              <span>AI Prompt &amp; Episode Director</span>
+            </span>
             <span class="h3-badge h3-badge-amber" data-nle="frame-calc-badge">124f (5.17s)</span>
           </div>
           <div class="h3-nle-pane-body">
-            <div class="h3-item-row">
-              <span class="h3-label" style="width:68px;">Ollama URL:</span>
-              <input type="text" class="h3-input" data-nle="ollama-url" value="https://ollama.smixapp.com" style="flex:1;" />
-              <button type="button" class="h3-btn" data-nle="refresh-models">Sync</button>
+            <!-- Compact Ollama Connection Bar -->
+            <div class="h3-section-box" style="padding:8px 10px;">
+              <div class="h3-item-row">
+                <span class="h3-label" style="width:52px;">Server:</span>
+                <input type="text" class="h3-input" data-nle="ollama-url" value="https://ollama.smixapp.com" style="flex:1;" />
+                <button type="button" class="h3-btn" data-nle="refresh-models">Sync Models</button>
+              </div>
+              <div class="h3-item-row">
+                <span class="h3-label" style="width:52px;">Model:</span>
+                <select class="h3-select" data-nle="ollama-model" style="flex:1;">
+                  <option value="qwen3.6:27b" selected>qwen3.6:27b [Local Vision - Recommended]</option>
+                  <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Local Vision]</option>
+                  <option value="minimax-m3:cloud">minimax-m3:cloud [Cloud]</option>
+                  <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud [Cloud]</option>
+                  <option value="glm-5.2:cloud">glm-5.2:cloud [Cloud]</option>
+                </select>
+              </div>
             </div>
-            <div class="h3-item-row">
-              <span class="h3-label" style="width:68px;">AI Model:</span>
-              <select class="h3-select" data-nle="ollama-model" style="flex:1;">
-                <option value="qwen3.6:27b" selected>qwen3.6:27b [Local Vision - Recommended]</option>
-                <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Local Vision]</option>
-                <option value="minimax-m3:cloud">minimax-m3:cloud [Cloud]</option>
-                <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud [Cloud]</option>
-                <option value="glm-5.2:cloud">glm-5.2:cloud [Cloud]</option>
-              </select>
+
+            <!-- Mode Switcher: Single Segment vs Full Episode Storyboard -->
+            <div class="h3-segmented-tabs">
+              <button type="button" class="h3-seg-tab active" data-nle="tab-single">
+                <span>Single Segment Deck</span>
+              </button>
+              <button type="button" class="h3-seg-tab" data-nle="tab-episode">
+                <span>Episode Storyboard (Long Story)</span>
+              </button>
             </div>
 
             <!-- VIEW A: SINGLE SEGMENT DECK -->
-            <div data-nle="view-single" style="display:flex; flex-direction:column; gap:10px; flex:1;">
+            <div data-nle="view-single" style="display:flex; flex-direction:column; gap:10px; flex:1; min-height:0;">
               <div class="h3-item-row">
                 <span class="h3-label">Mode:</span>
                 <select class="h3-select" data-nle="h3-mode" style="flex:1;">
@@ -264,86 +297,91 @@ function createNLEStudioWorkspace() {
                   <option value="L2VA (Last Frame Landing)">L2VA (Last Frame Landing)</option>
                 </select>
                 <span class="h3-label">Dur (s):</span>
-                <input type="number" class="h3-input" data-nle="duration-sec" min="2" max="15" step="0.5" value="5.0" style="width:54px;" />
+                <input type="number" class="h3-input" data-nle="duration-sec" min="2" max="15" step="0.5" value="5.0" style="width:58px;" />
               </div>
 
               <div>
                 <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                  <span class="h3-label">SCENE ACTION &amp; CAMERA DIRECTION (INDONESIAN / ENGLISH)</span>
+                  <span class="h3-label">SCENE ACTION &amp; CAMERA DIRECTION</span>
                 </div>
-                <textarea class="h3-textarea" data-nle="user-idea" placeholder="Tulis adegan lanjutan di sini (misal: Char1 menoleh ke arah pintu kafe saat Char2 masuk membawa payung basah)..."></textarea>
+                <textarea class="h3-textarea" data-nle="user-idea" style="min-height:66px;" placeholder="Tulis adegan di sini (misal: Char1 menoleh ke arah pintu kafe saat Char2 masuk membawa payung basah)..."></textarea>
               </div>
 
               <div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                  <span class="h3-label">SYNCHRONIZED DIALOGUE LINES (&lt;d&gt;[Language] ...&lt;/d&gt;)</span>
+                  <span class="h3-label">SYNCHRONIZED DIALOGUE (&lt;d&gt;[Language] ...&lt;/d&gt;)</span>
                   <button type="button" class="h3-btn h3-btn-primary" data-nle="add-dialogue">+ Add &lt;d&gt; Line</button>
                 </div>
-                <div class="h3-list-container" data-nle="dialogue-list" style="max-height:145px;"></div>
+                <div class="h3-list-container" data-nle="dialogue-list" style="max-height:135px;"></div>
               </div>
 
               <div style="display:flex; gap:6px;">
                 <button type="button" class="h3-btn h3-btn-accent" data-nle="generate-prompt" style="flex:1; padding:8px;">
-                  Compile H3 Prompt via Ollama
+                  Compile H3 Prompt
                 </button>
                 <button type="button" class="h3-btn h3-btn-primary" data-nle="auto-continue-prompt" style="flex:1; padding:8px;" title="Lock current frame, read previous segment prompt &amp; frame, and let AI write the next seamless segment!">
-                  AI Auto-Continue Next Seg
+                  AI Auto-Continue Seg
                 </button>
               </div>
 
-              <div style="flex:1; display:flex; flex-direction:column; min-height:100px;">
-                <span class="h3-label" style="margin-bottom:4px;">COMPILED H3 PROMPT OUTPUT (EDITABLE)</span>
-                <textarea class="h3-textarea" data-nle="compiled-prompt" style="flex:1; min-height:100px;" placeholder="Hasil prompt H3 (subject_definitions / integrated_multimodal_description, overall_soundscape, non_diegetic_music) akan tampil di sini..."></textarea>
+              <div style="flex:1; display:flex; flex-direction:column; min-height:105px;">
+                <span class="h3-label" style="margin-bottom:4px;">COMPILED 6-SECTION H3 PROMPT (EDITABLE)</span>
+                <textarea class="h3-textarea" data-nle="compiled-prompt" style="flex:1; min-height:100px;" placeholder="Hasil prompt H3 (subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music) akan tampil di sini..."></textarea>
               </div>
             </div>
 
-            <!-- VIEW B: EPISODE STORYBOARD DIRECTOR (MULTI-SEGMENT AUTO-PLANNER & AUTOPILOT) -->
-            <div data-nle="view-episode" style="display:none; flex-direction:column; gap:10px; flex:1;">
-              <div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                  <span class="h3-label">LONG STORY / EPISODE SYNOPSIS (MULTI-CHARACTER)</span>
-                  <span class="h3-badge" data-nle="sb-plan-summary">0 Segs Planned</span>
+            <!-- VIEW B: EPISODE STORYBOARD DIRECTOR (MULTI-ACT LONG STORY CHUNKER & AUTOPILOT) -->
+            <div data-nle="view-episode" style="display:none; flex-direction:column; gap:10px; flex:1; min-height:0;">
+              <div class="h3-section-box">
+                <div class="h3-section-header">
+                  <span class="h3-label">FULL EPISODE STORY / LONG SCRIPT (MULTI-ACT CHUNKED)</span>
+                  <div style="display:flex; gap:5px; align-items:center;">
+                    <span class="h3-badge" data-nle="sb-word-badge">0 words</span>
+                    <span class="h3-badge h3-badge-amber" data-nle="sb-plan-summary">0 Segs</span>
+                  </div>
                 </div>
-                <textarea class="h3-textarea" data-nle="sb-synopsis" style="min-height:76px;" placeholder="Tulis alur cerita panjang di sini (bisa melibatkan Char1, Char2, Char3, Char4, dst. AI akan membagi menjadi segmen-segmen 5–15 detik lengkap dengan dialog <d> dan pergantian karakter otomatis)..."></textarea>
-              </div>
-
-              <div class="h3-item-row">
-                <span class="h3-label">Target Dur:</span>
-                <select class="h3-select" data-nle="sb-total-dur" style="width:92px;">
-                  <option value="30">30 Sec</option>
-                  <option value="60" selected>1 Min (60s)</option>
-                  <option value="180">3 Min (180s)</option>
-                  <option value="300">5 Min (300s)</option>
-                  <option value="600">10 Min (600s)</option>
-                </select>
-                <span class="h3-label">Pacing:</span>
-                <select class="h3-select" data-nle="sb-pacing" style="flex:1;">
-                  <option value="auto_adaptive" selected>Auto-Adaptive (5s–15s by &lt;d&gt; length)</option>
-                  <option value="fast_5s">Fast Cuts (~5.17s / 124f)</option>
-                  <option value="standard_8s">Standard (~8.0s / 192f)</option>
-                  <option value="extended_12s">Extended (~12.0s / 294f)</option>
-                  <option value="max_15s">Max H3 Clip (15.08s / 362f)</option>
-                </select>
-              </div>
-
-              <div style="display:flex; gap:6px;">
-                <button type="button" class="h3-btn h3-btn-accent" data-nle="sb-plan-btn" style="flex:1; padding:7px;">
-                  AI Generate Multi-Segment Storyboard &amp; &lt;d&gt;
-                </button>
-                <button type="button" class="h3-btn" data-nle="sb-add-seg" title="Add Blank Segment Manually">+ Seg</button>
-              </div>
-
-              <div class="h3-list-container" data-nle="sb-segment-list" style="flex:1; max-height:260px; min-height:160px;">
-                <div class="h3-label" style="padding:12px; text-align:center;">
-                  Belum ada daftar segmen.<br/>Tulis sinopsis cerita di atas lalu klik <b>AI Generate Multi-Segment Storyboard</b>.
+                <textarea class="h3-textarea" data-nle="sb-synopsis" style="min-height:105px; max-height:220px;" placeholder="Paste naskah cerita panjang atau sinopsis multi-babak di sini (mendukung ribuan kata! Sistem otomatis membagi naskah panjang menjadi beberapa Act agar tidak kena limit memori Ollama, lalu men-generate prompt H3 6-bagian penuh untuk setiap segmen)..."></textarea>
+                <div class="h3-item-row" style="justify-content:space-between;">
+                  <div style="display:flex; gap:6px; align-items:center;">
+                    <span class="h3-label">Target Dur:</span>
+                    <select class="h3-select" data-nle="sb-total-dur" style="width:96px;">
+                      <option value="30">30 Sec</option>
+                      <option value="60" selected>1 Min (60s)</option>
+                      <option value="180">3 Min (180s)</option>
+                      <option value="300">5 Min (300s)</option>
+                      <option value="600">10 Min (600s)</option>
+                    </select>
+                  </div>
+                  <div style="display:flex; gap:6px; align-items:center; flex:1;">
+                    <span class="h3-label">Pacing:</span>
+                    <select class="h3-select" data-nle="sb-pacing" style="flex:1;">
+                      <option value="auto_adaptive" selected>Auto-Adaptive (5s–15s by &lt;d&gt;)</option>
+                      <option value="fast_5s">Fast (~5.17s / 124f)</option>
+                      <option value="standard_8s">Standard (~8.0s / 192f)</option>
+                      <option value="extended_12s">Extended (~12.0s / 294f)</option>
+                      <option value="max_15s">Max H3 (15.08s / 362f)</option>
+                    </select>
+                  </div>
+                </div>
+                <div style="display:flex; gap:6px;">
+                  <button type="button" class="h3-btn h3-btn-accent" data-nle="sb-plan-btn" style="flex:1; padding:8px;">
+                    AI Generate Episode Prompts (Multi-Act)
+                  </button>
+                  <button type="button" class="h3-btn" data-nle="sb-add-seg" title="Add Blank Segment Manually">+ Seg</button>
                 </div>
               </div>
 
-              <div style="display:flex; gap:5px; flex-wrap:wrap; border-top:1px solid var(--h3-border-hairline); padding-top:8px;">
-                <button type="button" class="h3-btn" data-nle="sb-run-next" style="flex:1;">
+              <div class="h3-list-container" data-nle="sb-segment-list" style="flex:1; min-height:190px;">
+                <div class="h3-label" style="padding:16px; text-align:center; line-height:1.5;">
+                  Belum ada daftar segmen.<br/>Paste cerita pendek atau naskah panjang di atas lalu klik <b>AI Generate Episode Prompts (Multi-Act)</b>.
+                </div>
+              </div>
+
+              <div style="display:flex; gap:6px; flex-wrap:wrap; border-top:1px solid var(--h3-border-hairline); padding-top:8px;">
+                <button type="button" class="h3-btn" data-nle="sb-run-next" style="flex:1; padding:7px;">
                   Run Next Pending Seg
                 </button>
-                <button type="button" class="h3-btn h3-btn-primary" data-nle="sb-autopilot-btn" style="flex:1;">
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="sb-autopilot-btn" style="flex:1; padding:7px;">
                   Auto-Produce All (Autopilot)
                 </button>
               </div>
@@ -698,6 +736,27 @@ function createNLEStudioWorkspace() {
     }
   });
 
+  // Left Pane Sub-Tabs: Characters vs LoRA & Speed
+  const btnLeftChars = backdrop.querySelector('[data-nle="left-tab-chars"]');
+  const btnLeftLoras = backdrop.querySelector('[data-nle="left-tab-loras"]');
+  const viewLeftChars = backdrop.querySelector('[data-nle="left-view-chars"]');
+  const viewLeftLoras = backdrop.querySelector('[data-nle="left-view-loras"]');
+
+  if (btnLeftChars && btnLeftLoras) {
+    btnLeftChars.addEventListener("click", () => {
+      btnLeftChars.classList.add("active");
+      btnLeftLoras.classList.remove("active");
+      viewLeftChars.style.display = "flex";
+      viewLeftLoras.style.display = "none";
+    });
+    btnLeftLoras.addEventListener("click", () => {
+      btnLeftLoras.classList.add("active");
+      btnLeftChars.classList.remove("active");
+      viewLeftChars.style.display = "none";
+      viewLeftLoras.style.display = "flex";
+    });
+  }
+
   // Tab Switching: Single Segment Deck vs Episode Storyboard (Auto-10m)
   const btnTabSingle = backdrop.querySelector('[data-nle="tab-single"]');
   const btnTabEpisode = backdrop.querySelector('[data-nle="tab-episode"]');
@@ -705,15 +764,15 @@ function createNLEStudioWorkspace() {
   const viewEpisode = backdrop.querySelector('[data-nle="view-episode"]');
 
   btnTabSingle.addEventListener("click", () => {
-    btnTabSingle.classList.add("h3-btn-primary");
-    btnTabEpisode.classList.remove("h3-btn-primary");
+    btnTabSingle.classList.add("active");
+    btnTabEpisode.classList.remove("active");
     viewSingle.style.display = "flex";
     viewEpisode.style.display = "none";
   });
 
   btnTabEpisode.addEventListener("click", () => {
-    btnTabEpisode.classList.add("h3-btn-primary");
-    btnTabSingle.classList.remove("h3-btn-primary");
+    btnTabEpisode.classList.add("active");
+    btnTabSingle.classList.remove("active");
     viewSingle.style.display = "none";
     viewEpisode.style.display = "flex";
     renderStoryboardQueue();
@@ -721,6 +780,7 @@ function createNLEStudioWorkspace() {
 
   // Episode Storyboard State & Autopilot Engine
   const elSbSynopsis = backdrop.querySelector('[data-nle="sb-synopsis"]');
+  const elSbWordBadge = backdrop.querySelector('[data-nle="sb-word-badge"]');
   const elSbTotalDur = backdrop.querySelector('[data-nle="sb-total-dur"]');
   const elSbPacing = backdrop.querySelector('[data-nle="sb-pacing"]');
   const elSbPlanBtn = backdrop.querySelector('[data-nle="sb-plan-btn"]');
@@ -729,6 +789,15 @@ function createNLEStudioWorkspace() {
   const elSbPlanSummary = backdrop.querySelector('[data-nle="sb-plan-summary"]');
   const elSbRunNextBtn = backdrop.querySelector('[data-nle="sb-run-next"]');
   const elSbAutopilotBtn = backdrop.querySelector('[data-nle="sb-autopilot-btn"]');
+
+  if (elSbSynopsis && elSbWordBadge) {
+    elSbSynopsis.addEventListener("input", () => {
+      const txt = elSbSynopsis.value.trim();
+      const words = txt ? txt.split(/\s+/).length : 0;
+      const estActs = txt.length > 3500 ? Math.min(4, Math.max(2, Math.floor(txt.length / 2500))) : 1;
+      elSbWordBadge.textContent = estActs > 1 ? `${words} words (${estActs} Acts)` : `${words} words`;
+    });
+  }
 
   let storyboardState = {
     segments: [],

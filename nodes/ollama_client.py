@@ -848,6 +848,36 @@ def _extract_json_array_robust(raw_text: str) -> Optional[List[Dict[str, Any]]]:
     return objects if objects else None
 
 
+def _split_long_story_into_acts(story_text: str, total_Acts: int) -> List[str]:
+    """
+    Split a potentially huge story manuscript (up to 10,000+ words) into `total_Acts`
+    balanced narrative chunks along paragraph or sentence boundaries so each LLM call
+    receives a clean, focused ~1,500–2,500 char chapter without overflowing Ollama's context.
+    """
+    cleaned = (story_text or "").strip()
+    if not cleaned:
+        return ["Two characters meet at a mysterious neon-lit cafe during a rainstorm to exchange a secret digital key, when a third rival character arrives."]
+    if total_Acts <= 1 or len(cleaned) <= 2200:
+        return [cleaned]
+
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", cleaned) if p.strip()]
+    if len(paragraphs) < total_Acts:
+        paragraphs = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", cleaned) if s.strip()]
+
+    if not paragraphs:
+        return [cleaned[:2500]]
+
+    acts: List[str] = []
+    total_items = len(paragraphs)
+    chunk_size = max(1, (total_items + total_Acts - 1) // total_Acts)
+    for i in range(0, total_items, chunk_size):
+        chunk_str = "\n\n".join(paragraphs[i : i + chunk_size]).strip()
+        if chunk_str:
+            # Cap single act chunk at 3800 chars so Ollama never hits 500 OOM on KV cache
+            acts.append(chunk_str[:3800])
+    return acts if acts else [cleaned[:2500]]
+
+
 def generate_storyboard_plan_via_ollama(
     story_synopsis: str,
     target_total_duration_sec: float = 60.0,
@@ -860,10 +890,11 @@ def generate_storyboard_plan_via_ollama(
     timeout: float = 75.0,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
-    AI Episode Prompt Generator:
-    Takes a story idea (short or long) and uses Ollama LLM to write an entire multi-segment
-    episode screenplay AND compiles a complete 6-section MiniMax-H3 prompt (`compiled_h3_prompt`)
-    for every single segment up front!
+    Multi-Act Chunked AI Episode Prompt Generator:
+    Handles both short premises and massive 5,000+ word story manuscripts!
+    1. Splits long text into digestible Act chunks (~2,000–3,500 chars each) so Ollama never hits HTTP 500 OOM.
+    2. Requests 6–8 segments per Act batch so JSON output is fast and never truncated.
+    3. Compiles a complete 6-section MiniMax-H3 prompt (`compiled_h3_prompt`) for every single segment.
     """
     roster = characters_roster or [
         {"slot": 1, "name": "Char1", "speaker_id": "S1", "visual_traits": "lead character", "voice_desc": "clear natural voice"}
@@ -891,14 +922,21 @@ def generate_storyboard_plan_via_ollama(
     else:
         avg_seg_sec = 8.0
 
-    est_segments = max(2, min(60, int(round(float(target_total_duration_sec) / avg_seg_sec))))
-    # Keep single LLM call around 12 segments max so cloud LLM finishes within timeout and never truncates JSON
-    batch_seg_count = min(12, est_segments)
+    est_total_segments = max(2, min(48, int(round(float(target_total_duration_sec) / avg_seg_sec))))
+    # Each LLM batch generates at most 6 segments (~1.5k output tokens) so Ollama responds fast and cleanly.
+    # For longer durations or huge story manuscripts, we run up to 4 sequential Act batches (up to 24 segments per click).
+    segs_per_batch = 6
+    num_batches = max(1, min(4, (est_total_segments + segs_per_batch - 1) // segs_per_batch))
+    if len(story_synopsis or "") > 3500 and num_batches < 2:
+        num_batches = min(4, max(2, len(story_synopsis) // 2500))
+
+    act_chunks = _split_long_story_into_acts(story_synopsis, num_batches)
+    num_batches = len(act_chunks)
 
     system_prompt = (
         "You are an AI Episode Screenwriter & MiniMax-H3 Prompt Director.\n"
-        "The user will give you a story premise or synopsis. You MUST creatively write and expand the story into a complete sequential episode of video segments.\n"
-        "DO NOT just split or copy the user's sentences — invent vivid cinematic camera movements, dramatic progression, emotional facial expressions, environmental soundscapes, and natural spoken dialogue lines for each segment!\n"
+        "Transform the provided story act into a sequential JSON array of cinematic video segments.\n"
+        "Invent vivid camera movements, dramatic progression, facial expressions, environmental soundscapes, and natural spoken dialogue lines for each segment.\n"
         "Output ONLY a valid JSON array `[ ... ]` with no markdown commentary.\n\n"
         "Each element in the JSON array MUST follow this schema:\n"
         "{\n"
@@ -907,57 +945,84 @@ def generate_storyboard_plan_via_ollama(
         '  "transition_type": "NEW_SCENE_CUT" or "CONTINUE_FRAME",\n'
         '  "active_character_slots": [1, 2],\n'
         '  "duration_seconds": 8.0,\n'
-        '  "visual_action": "Detailed cinematic English description of camera motion (e.g. Push In / Tracking Shot / Pan Right at slow speed), character blocking, micro-expressions, and physical action.",\n'
-        '  "soundscape": "Specific ambient sounds and foley (e.g. rain tapping on glass, footsteps on wet pavement, cafe murmur).",\n'
-        '  "music": "N/A or specific background music mood",\n'
+        '  "visual_action": "Detailed cinematic English description of camera motion (Push In / Tracking Shot / Pan), character blocking, micro-expressions, and physical action.",\n'
+        '  "soundscape": "Specific ambient sounds and foley.",\n'
+        '  "music": "N/A or background music mood",\n'
         '  "dialogue_lines": [\n'
-        '    {"speaker": "<Subject 1> (S1)", "language": "' + default_language + '", "text": "Original spoken line written by you for this moment.", "delivery": "warm expressive tone", "voiceover": false}\n'
+        '    {"speaker": "<Subject 1> (S1)", "language": "' + default_language + '", "text": "Spoken dialogue line for this segment.", "delivery": "warm expressive tone", "voiceover": false}\n'
         "  ]\n"
         "}\n\n"
-        "CRITICAL RULES:\n"
-        "1. Segment 1 MUST be `NEW_SCENE_CUT`. Use `CONTINUE_FRAME` when continuing the exact same camera shot from the previous segment's last frame. Use `NEW_SCENE_CUT` every 3-4 segments or when changing camera angles/locations.\n"
-        "2. `active_character_slots`: Array of slot numbers (from Character Roster) present in this segment. Note that dentro de each segment, the active characters are dynamically indexed `<Subject 1>`, `<Subject 2>`, etc. in order of their active slots.\n"
-        f"3. Every segment should have natural spoken `dialogue_lines` in {default_language} that advance the plot, plus rich English `visual_action` and `soundscape`."
+        "RULES:\n"
+        "1. First segment of a new scene MUST be `NEW_SCENE_CUT`. Use `CONTINUE_FRAME` when continuing the exact same camera shot. Use `NEW_SCENE_CUT` every 3-4 segments.\n"
+        "2. `active_character_slots`: Array of slot numbers (from Character Roster) visible/speaking in this segment.\n"
+        f"3. Write `dialogue_lines[].text` in {default_language} and `visual_action` in cinematic English."
     )
 
-    user_prompt = (
-        f"CHARACTER ROSTER (Slots 1..{len(roster)}):\n{roster_block}\n\n"
-        f"VISUAL STYLE: {visual_style}\n"
-        f"EPISODE TARGET: Generate {batch_seg_count} sequential segments (~{avg_seg_sec:.0f}s each, between 5s and 15s).\n\n"
-        f"USER STORY PREMISE / SYNOPSIS:\n{story_synopsis.strip() or 'Two characters meet at a mysterious neon-lit cafe during a rainstorm to exchange a secret digital key, when a third rival character arrives.'}\n\n"
-        f"Output ONLY the JSON array of {batch_seg_count} segments:"
-    )
+    all_parsed_items: List[Dict[str, Any]] = []
+    used_model_final = model_name
+    last_err = ""
+    prev_summary_tail = ""
 
-    print(f"[H3-Studio] Generating {batch_seg_count}-segment AI EpisodePrompts via Ollama ({model_name})...")
-    raw_resp, used_model, status_detail = _call_ollama_text(
-        ollama_url=ollama_url,
-        model_name=model_name,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=0.55,
-        timeout=timeout,
-    )
-    if raw_resp:
-        parsed = _extract_json_array_robust(raw_resp)
-        if parsed and len(parsed) > 0:
-            normalized = _normalize_storyboard_segments(
-                parsed, roster, pacing_mode, avg_seg_sec, default_language, visual_style
-            )
-            print(f"[H3-Studio] AI Episode Storyboard ready: {len(normalized)} full H3 prompts compiled via {used_model}.")
-            return normalized, f"AI Episode Generated ({len(normalized)} full H3 prompts via {used_model})"
-        err_msg = f"Model {used_model} returned non-JSON text"
-    else:
-        err_msg = status_detail
+    for batch_idx, act_text in enumerate(act_chunks):
+        remaining_segs = est_total_segments - len(all_parsed_items)
+        this_batch_count = max(2, min(segs_per_batch, remaining_segs if batch_idx == num_batches - 1 else segs_per_batch))
+
+        continuity_note = (
+            f"\nPREVIOUS ACT ENDING CONTEXT:\n{prev_summary_tail}\nContinue seamlessly into Act {batch_idx + 1}.\n"
+            if prev_summary_tail
+            else ""
+        )
+        user_prompt = (
+            f"CHARACTER ROSTER (Slots 1..{len(roster)}):\n{roster_block}\n\n"
+            f"VISUAL STYLE: {visual_style}\n"
+            f"ACT {batch_idx + 1} OF {num_batches}: Generate {this_batch_count} sequential segments (~{avg_seg_sec:.0f}s each, between 5s and 15s).\n"
+            f"{continuity_note}\n"
+            f"STORY TEXT FOR ACT {batch_idx + 1}:\n{act_text}\n\n"
+            f"Output ONLY the JSON array of {this_batch_count} segments:"
+        )
+
+        print(
+            f"[H3-Studio] Generating Act {batch_idx + 1}/{num_batches} ({this_batch_count} segments, {len(act_text)} chars) via Ollama ({used_model_final})..."
+        )
+        raw_resp, used_model, status_detail = _call_ollama_text(
+            ollama_url=ollama_url,
+            model_name=used_model_final,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.5,
+            timeout=timeout,
+        )
+        used_model_final = used_model
+        if raw_resp:
+            parsed = _extract_json_array_robust(raw_resp)
+            if parsed and len(parsed) > 0:
+                all_parsed_items.extend(parsed)
+                last_item = parsed[-1]
+                prev_summary_tail = f"Last segment action: {last_item.get('visual_action', '')}"
+                continue
+            last_err = f"Model {used_model} returned non-JSON text"
+        else:
+            last_err = status_detail
+            break
+
+    if all_parsed_items:
+        normalized = _normalize_storyboard_segments(
+            all_parsed_items, roster, pacing_mode, avg_seg_sec, default_language, visual_style
+        )
+        print(
+            f"[H3-Studio] AI Episode Storyboard ready: {len(normalized)} full H3 prompts compiled across {num_batches} act(s) via {used_model_final}."
+        )
+        return normalized, f"AI Episode Generated ({len(normalized)} full H3 prompts across {num_batches} Act(s) via {used_model_final})"
 
     fallback_segs = _build_fallback_storyboard(
         story_synopsis=story_synopsis,
-        segment_count=batch_seg_count,
+        segment_count=min(12, est_total_segments),
         roster=roster,
         avg_seg_sec=avg_seg_sec,
         default_language=default_language,
         visual_style=visual_style,
     )
-    return fallback_segs, f"Offline Fallback ({err_msg} — check Ollama model/connection)"
+    return fallback_segs, f"Offline Fallback ({last_err})"
 
 
 def _normalize_storyboard_segments(
