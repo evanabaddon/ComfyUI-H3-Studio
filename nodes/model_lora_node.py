@@ -89,6 +89,7 @@ def _resolve_fast_attention_callable(backend: str):
             return orig_func(*args, **kwargs)
 
         # Standardize tensor layout to [B, H, S, D] for SageAttention / FlashAttn2 / SDPA
+        skip_output_reshape = bool(kwargs.get("skip_output_reshape", False))
         if skip_reshape:
             # q, k, v already have head dimension [B, H, S, D]
             b, h, s_q, d = q.shape
@@ -134,7 +135,11 @@ def _resolve_fast_attention_callable(backend: str):
         if out_bhsd is None:
             out_bhsd = F.scaled_dot_product_attention(q_bhsd, k_bhsd, v_bhsd, attn_mask=None, is_causal=False)
 
-        if skip_reshape:
+        # IMPORTANT: In ComfyUI's `optimized_attention`, `skip_reshape=True` ONLY means the inputs
+        # `q, k, v` are already shaped `(B, H, S, D)`. The return value MUST ALWAYS be reshaped back
+        # to `(B, S, H * D)` (e.g. `[B, S, 7168]` for MiniMax-H3's 56 heads * 128 dim) before `to_out`,
+        # unless `skip_output_reshape=True` is explicitly passed!
+        if skip_output_reshape:
             return out_bhsd
         return out_bhsd.transpose(1, 2).reshape(b, s_q, heads * d)
 
