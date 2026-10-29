@@ -73,10 +73,22 @@ def _resolve_fast_attention_callable(backend: str):
     elif xformers_fn is not None:
         selected_name = "xformers"
 
-    def custom_attn_override(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, **kwargs):
-        if torch is None:
-            return q
-        # Standardize tensor layout to [B, H, S, D] for SageAttention / SDPA
+    def custom_attn_override(orig_func, *args, **kwargs):
+        # ComfyUI's `optimized_attention` wrapper calls:
+        # `optimized_attention_override(func, *args, **kwargs)`
+        # where `args` is `(q, k, v, heads, ...)`
+        if torch is None or len(args) < 4:
+            return orig_func(*args, **kwargs)
+
+        q, k, v, heads = args[0], args[1], args[2], args[3]
+        mask = args[4] if len(args) > 4 else kwargs.get("mask", None)
+        skip_reshape = args[6] if len(args) > 6 else kwargs.get("skip_reshape", False)
+
+        # If a custom mask is present, delegate safely to ComfyUI's original attention function
+        if mask is not None:
+            return orig_func(*args, **kwargs)
+
+        # Standardize tensor layout to [B, H, S, D] for SageAttention / FlashAttn2 / SDPA
         if skip_reshape:
             # q, k, v already have head dimension [B, H, S, D]
             b, h, s_q, d = q.shape
@@ -89,26 +101,26 @@ def _resolve_fast_attention_callable(backend: str):
             v_bhsd = v.view(b, -1, heads, d).transpose(1, 2)
 
         out_bhsd = None
-        if sage_fn is not None and mask is None:
+        if sage_fn is not None:
             try:
                 out_bhsd = sage_fn(q_bhsd, k_bhsd, v_bhsd, tensor_layout="HND", is_causal=False)
             except Exception:
                 out_bhsd = None
 
-        if out_bhsd is None and flash_fn is not None and mask is None and q_bhsd.dtype in (torch.float16, torch.bfloat16):
+        if out_bhsd is None and flash_fn is not None and q_bhsd.dtype in (torch.float16, torch.bfloat16):
             try:
                 # flash_attn_func expects [B, S, H, D]
                 out_bshd = flash_fn(
                     q_bhsd.transpose(1, 2).contiguous(),
                     k_bhsd.transpose(1, 2).contiguous(),
                     v_bhsd.transpose(1, 2).contiguous(),
-                     causal=False,
+                    causal=False,
                 )
                 out_bhsd = out_bshd.transpose(1, 2)
             except Exception:
                 out_bhsd = None
 
-        if out_bhsd is None and xformers_fn is not None and mask is None:
+        if out_bhsd is None and xformers_fn is not None:
             try:
                 out_bshd = xformers_fn(
                     q_bhsd.transpose(1, 2).contiguous(),
@@ -120,7 +132,7 @@ def _resolve_fast_attention_callable(backend: str):
                 out_bhsd = None
 
         if out_bhsd is None:
-            out_bhsd = F.scaled_dot_product_attention(q_bhsd, k_bhsd, v_bhsd, attn_mask=mask, is_causal=False)
+            out_bhsd = F.scaled_dot_product_attention(q_bhsd, k_bhsd, v_bhsd, attn_mask=None, is_causal=False)
 
         if skip_reshape:
             return out_bhsd
