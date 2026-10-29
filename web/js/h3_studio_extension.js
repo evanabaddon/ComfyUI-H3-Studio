@@ -1,5 +1,5 @@
-import { app } from "../../scripts/app.js";
-import { api } from "../../scripts/api.js";
+import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 
 // ============================================================================
 // Inject Precision Broadcast NLE Stylesheet
@@ -1497,12 +1497,29 @@ function setupPromptComposerNodeUI(node) {
 }
 
 // ============================================================================
-// Register Extension with ComfyUI
+// Register Extension with ComfyUI (Supports both Legacy LiteGraph & Node 2.0)
 // ============================================================================
 app.registerExtension({
   name: "ComfyUI.H3Studio.InteractiveExtension",
   async setup() {
     createNLEStudioWorkspace();
+  },
+  async nodeCreated(node) {
+    if (!node) return;
+    const t = node.comfyClass || node.type || "";
+    if (t === "H3InteractiveVideoExtender" && !node._h3UiInitialized) {
+      node._h3UiInitialized = true;
+      setupExtenderNodeUI(node);
+    } else if (t === "H3ModelSpeedAndLoraHub" && !node._h3UiInitialized) {
+      node._h3UiInitialized = true;
+      setupModelLoraNodeUI(node);
+    } else if (t === "H3CharacterReferenceHub" && !node._h3UiInitialized) {
+      node._h3UiInitialized = true;
+      setupCharacterHubNodeUI(node);
+    } else if (t === "H3AIPromptComposer" && !node._h3UiInitialized) {
+      node._h3UiInitialized = true;
+      setupPromptComposerNodeUI(node);
+    }
   },
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (!nodeData) return;
@@ -1511,25 +1528,37 @@ app.registerExtension({
       const origCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
         if (origCreated) origCreated.apply(this, arguments);
-        setupExtenderNodeUI(this);
+        if (!this._h3UiInitialized) {
+          this._h3UiInitialized = true;
+          setupExtenderNodeUI(this);
+        }
       };
     } else if (nodeData.name === "H3ModelSpeedAndLoraHub") {
       const origCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
         if (origCreated) origCreated.apply(this, arguments);
-        setupModelLoraNodeUI(this);
+        if (!this._h3UiInitialized) {
+          this._h3UiInitialized = true;
+          setupModelLoraNodeUI(this);
+        }
       };
     } else if (nodeData.name === "H3CharacterReferenceHub") {
       const origCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
         if (origCreated) origCreated.apply(this, arguments);
-        setupCharacterHubNodeUI(this);
+        if (!this._h3UiInitialized) {
+          this._h3UiInitialized = true;
+          setupCharacterHubNodeUI(this);
+        }
       };
     } else if (nodeData.name === "H3AIPromptComposer") {
       const origCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
         if (origCreated) origCreated.apply(this, arguments);
-        setupPromptComposerNodeUI(this);
+        if (!this._h3UiInitialized) {
+          this._h3UiInitialized = true;
+          setupPromptComposerNodeUI(this);
+        }
       };
     }
   },
