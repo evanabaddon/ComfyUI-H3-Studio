@@ -174,7 +174,7 @@
         "https://ollama.smixapp.com",
         "minimax-m3:cloud",
         true,
-        true,
+        false,
         "[{\"speaker\":\"<Subject 1> (S1)\",\"language\":\"Indonesian\",\"text\":\"Kita mulai proyek ini hari ini ya!\",\"delivery\":\"enthusiastic young voice\",\"voiceover\":false}]",
         ""
       ]

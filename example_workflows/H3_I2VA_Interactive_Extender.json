@@ -12,7 +12,7 @@
       "mode": 0,
       "outputs": [{"name": "MODEL", "type": "MODEL", "links": [1]}],
       "title": "1. Load MiniMax-H3 FL2VA Model",
-      "widgets_values": ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "default"]
+      "widgets_values": ["minimax_h3_fl2va_pruned_fp8_scaled.safetensors", "default"]
     },
     {
       "id": 2,
@@ -110,7 +110,7 @@
         "https://ollama.smixapp.com",
         "minimax-m3:cloud",
         true,
-        true,
+        false,
         "[{\"speaker\":\"(S1)\",\"language\":\"Indonesian\",\"text\":\"Aku turun di stasiun berikutnya.\",\"delivery\":\"quiet breathy female voice\",\"voiceover\":false}]",
         ""
       ]

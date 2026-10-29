@@ -80,46 +80,57 @@ def sanitize_dialogue_tags(prompt_text: str) -> str:
 
 def build_h3_system_prompt(mode: str) -> str:
     """
-    Construct the authoritative system prompt for MiniMax-H3 using the official bundled
-    SKILL.md, base-en.txt, and ref-en.txt guides.
+    Construct a concise, high-speed, authoritative system prompt for MiniMax-H3
+    distilled from the official SKILL.md, base-en.txt, and ref-en.txt guides.
+    Keeps token count compact (~1.5k tokens instead of 12k) so Ollama responds in seconds.
     """
-    skill_md = _read_rule_file("SKILL.md")
     if mode.upper() == "REF2VA":
-        guide_txt = _read_rule_file("ref-en.txt")
-        mode_instruction = (
+        return (
             "You are an expert MiniMax-H3 Video Prompt Writer operating in Full-Reference Mode (Ref2VA).\n"
-            "You MUST output ONLY the final rewritten MiniMax-H3 prompt with the exact 6 sections in order:\n"
-            "1. subject_definitions:\n"
-            "2. summary:\n"
-            "3. retention_analysis:\n"
-            "4. detailed_description:\n"
-            "5. overall_soundscape:\n"
-            "6. non_diegetic_music:\n\n"
+            "Output ONLY the final MiniMax-H3 prompt containing these exact 6 sections in order (no markdown fences, no commentary):\n\n"
+            "subject_definitions:\n"
+            "(Define each active <Subject N>, <Picture N>, <Video N>, and <Audio N> on its own line. "
+            "Example: `<Subject 1> is the young woman in <Picture 1>, wearing a blue cardigan.` "
+            "If <Picture 1> is the opening frame anchor, write: `<Picture 1> is the first frame of [Shot 1], showing ...` "
+            "If audio is used for a speaker: `<Audio 1> is the voice-timbre reference for <Subject 1> (S1).`)\n\n"
+            "summary:\n"
+            "([task_type] One short English paragraph summarizing the target video using the defined <Subject N>, <Picture N>, <Audio N> tags. "
+            "Valid task types joined by ' + ': `keyframe completion`, `reference generation`, `video continuation`, `audio reuse`, `audio reference`.)\n\n"
+            "retention_analysis:\n"
+            "(One line per label stating where it appears and its retention marker: `fully_preserved`, `partially_preserved`, `attribute_transfer`, or `weak_reference` for visuals; `fully_copy`, `partially_copy`, `reference` for audio. "
+            "Example: `<Subject 1> (appears in [Shot 1]): fully_preserved - facial identity, hair, and outfit are retained.`)\n\n"
+            "detailed_description:\n"
+            "(First write 1 sentence establishing visual style before [Shot 1]. Then write `[Shot 1] ...` in detailed chronological order. "
+            "For later cuts use `[Shot 2] At 00:03.000, the camera cuts to ...`. "
+            "Describe camera motion naturally using: Zoom In/Out, Push In/Pull Out, Pan Left/Right, Truck Left/Right, Tilt Up/Down, Tracking Shot, Static Shot + optional `with small/large amplitude` and `at slow/fast speed`.)\n\n"
+            "overall_soundscape:\n"
+            "(1-3 English sentences summarizing ambient sound and physical action sounds across the video.)\n\n"
+            "non_diegetic_music:\n"
+            "(1-2 English sentences describing background score instrumentation and tempo audible only to the audience, or `N/A`.)\n\n"
             "CRITICAL DIALOGUE (<d>) RULES:\n"
-            "- Write all narrative/visual descriptions in English.\n"
-            "- Preserve dialogue and lyrics in their ORIGINAL language inside <d>[Language] ...</d> (e.g., <d>[Indonesian] ...</d> or <d>[English] ...</d>).\n"
-            "- Assign stable speaker IDs (S1), (S2) in order of vocal appearance. When a referenced character speaks, write `<Subject N> (Sx)` outside `<d>`.\n"
-            "- State lip closure after a character finishes speaking (e.g. 'She closes her lips...'), or use `says in an off-screen voiceover: <d>[Language] ...</d> while his lips remain completely closed.` for voiceover.\n"
-            "- Do NOT include markdown code fences (```), commentary, or explanations—output ONLY the raw H3 prompt text."
-        )
-    else:
-        guide_txt = _read_rule_file("base-en.txt")
-        mode_instruction = (
-            f"You are an expert MiniMax-H3 Video Prompt Writer operating in Base Mode ({mode.upper()}).\n"
-            "You MUST output ONLY the final rewritten MiniMax-H3 prompt following the exact structure in the guide:\n"
-            "- For I2VA / FL2VA / L2VA: Begin with the exact required alignment instruction line on line 1, followed by a blank line.\n"
-            "- Then provide the three core fields in exact order:\n"
-            "  integrated_multimodal_description: [Shot 1] ...\n\n"
-            "  overall_soundscape: ...\n\n"
-            "  non_diegetic_music: ...\n\n"
-            "CRITICAL DIALOGUE (<d>) RULES:\n"
-            "- Write all narrative/visual descriptions in English.\n"
-            "- Preserve any spoken dialogue or lyrics verbatim in their ORIGINAL language inside <d>[Language] ...</d> (e.g., <d>[Indonesian] ...</d> or <d>[English] ...</d>).\n"
-            "- Assign stable speaker IDs (S1), (S2) to speaking characters and describe their voice timbre and lip closure.\n"
-            "- Do NOT include markdown code fences (```), commentary, or explanations—output ONLY the raw H3 prompt text."
+            "- Write all visual/narrative descriptions in English, but preserve spoken dialogue/lyrics verbatim in their ORIGINAL language inside `<d>[Language] ...</d>`.\n"
+            "- Assign stable speaker IDs `(S1)`, `(S2)`. When a referenced character speaks, write `<Subject 1> (S1) says in a [voice description]: <d>[Indonesian] ...</d> She then closes her lips.`\n"
+            "- For off-screen voiceover, write: `says in an off-screen voiceover: <d>[Language] ...</d> while his lips remain completely closed.`\n"
+            "- Never repeat dialogue inside overall_soundscape or non_diegetic_music."
         )
 
-    return f"{mode_instruction}\n\n=== OFFICIAL SKILL OVERVIEW ===\n{skill_md}\n\n=== OFFICIAL FORMAT GUIDE ===\n{guide_txt}"
+    return (
+        f"You are an expert MiniMax-H3 Video Prompt Writer operating in Base Mode ({mode.upper()}).\n"
+        "Output ONLY the final MiniMax-H3 prompt (no markdown code fences, no explanations) following this exact structure:\n\n"
+        "1. Opening Alignment Instruction Line (ONLY for I2VA, FL2VA, L2VA — omit for T2VA):\n"
+        "- If I2VA: `For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.`\n"
+        "- If FL2VA: `How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video.`\n"
+        "- If L2VA: `How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video.`\n"
+        "(Follow the instruction line with one blank line.)\n\n"
+        "2. Three Core Fields in Exact Order:\n"
+        "integrated_multimodal_description: [Shot 1] <Visual style>, <composition, subjects, environment, camera motion (Push In/Pull Out/Pan/Truck/Tilt/Tracking/Static with small/large amplitude at slow/fast speed), actions, and synchronized diegetic audio>. "
+        "(For I2VA, anchor [Shot 1] to `<Picture 1>` at 0.00s and develop the motion forward. For later cuts use `[Shot 2] At 00:03.000, the camera cuts to...`)\n\n"
+        "overall_soundscape: <1-3 English sentences summarizing ambient and physical action sounds across the full video.>\n\n"
+        "non_diegetic_music: <1-2 English sentences describing background music instrumentation and tempo, or N/A.>\n\n"
+        "CRITICAL DIALOGUE (<d>) RULES:\n"
+        "- Write narrative descriptions in English, but keep spoken dialogue verbatim in its ORIGINAL language inside `<d>[Language] ...</d>` (e.g. `the young woman with a soft voice (S1) says: <d>[Indonesian] Aku turun di stasiun berikutnya.</d> She closes her lips.`).\n"
+        "- For voiceover, use `says in an off-screen voiceover: <d>[Language] ...</d> while their lips remain completely closed.`"
+    )
 
 
 def build_h3_user_message(
@@ -232,13 +243,14 @@ def generate_h3_prompt_via_ollama(
     model_name: str = DEFAULT_OLLAMA_MODEL,
     style_embedding: str = "none",
     temperature: float = 0.4,
-    timeout: float = 90.0,
+    timeout: float = 25.0,
 ) -> Tuple[str, str]:
     """
     Call https://ollama.smixapp.com/api/chat to generate a compliant MiniMax-H3 prompt.
     Returns (formatted_prompt, status_message).
     Falls back to a deterministic rule-compliant H3 prompt builder if network/model fails.
     """
+    print(f"[H3-Studio] Requesting AI prompt rewrite via Ollama ({model_name} @ {ollama_url}, mode={mode})...")
     system_prompt = build_h3_system_prompt(mode)
     user_msg = build_h3_user_message(
         user_idea=user_idea,
@@ -295,6 +307,7 @@ def generate_h3_prompt_via_ollama(
 
         content = sanitize_dialogue_tags(content)
         if content:
+            print(f"[H3-Studio] Ollama prompt generated successfully ({len(content)} chars).")
             return content, f"OK ({model_name} @ {ollama_url})"
     except urllib.error.HTTPError as e:
         # If vision images caused a 400 on a non-vision model, retry once without images
@@ -321,6 +334,7 @@ def generate_h3_prompt_via_ollama(
         err_msg = str(e)
 
     # Local deterministic fallback so workflow never crashes if offline
+    print(f"[H3-Studio] Ollama unavailable or timed out ({err_msg}). Using instant local H3 rule compiler.")
     fallback = build_local_fallback_h3_prompt(
         user_idea=user_idea,
         mode=mode,

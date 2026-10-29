@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .ollama_client import (
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_OLLAMA_URL,
+    build_local_fallback_h3_prompt,
     fetch_ollama_models,
     generate_h3_prompt_via_ollama,
     sanitize_dialogue_tags,
@@ -73,7 +74,7 @@ class H3AIPromptComposer:
                 "ollama_url": ("STRING", {"default": DEFAULT_OLLAMA_URL, "multiline": False}),
                 "ollama_model": ("STRING", {"default": DEFAULT_OLLAMA_MODEL, "multiline": False}),
                 "send_vision_images": ("BOOLEAN", {"default": True}),
-                "auto_rewrite_on_queue": ("BOOLEAN", {"default": True}),
+                "auto_rewrite_on_queue": ("BOOLEAN", {"default": False}),
                 "dialogue_lines_json": (
                     "STRING",
                     {
@@ -135,7 +136,7 @@ class H3AIPromptComposer:
         ollama_url: str = DEFAULT_OLLAMA_URL,
         ollama_model: str = DEFAULT_OLLAMA_MODEL,
         send_vision_images: bool = True,
-        auto_rewrite_on_queue: bool = True,
+        auto_rewrite_on_queue: bool = False,
         dialogue_lines_json: str = "[]",
         generated_h3_prompt: str = "",
         h3_ref_bundle: Optional[Dict[str, Any]] = None,
@@ -186,11 +187,26 @@ class H3AIPromptComposer:
         except Exception:
             dialogue_lines = []
 
-        # 4. If user already clicked "Generate with AI" in the node UI and locked the prompt, or auto_rewrite_on_queue is False
+        # 4. If auto_rewrite_on_queue is False, run with zero network delay:
+        #    - Use generated_h3_prompt if the user already compiled/edited one in the UI
+        #    - Otherwise instantly compile a MiniMax-H3 compliant prompt locally
         existing_clean = generated_h3_prompt.strip()
-        if existing_clean and not auto_rewrite_on_queue:
-            final_prompt = sanitize_dialogue_tags(existing_clean)
-            status = "Using manually edited / pre-generated H3 prompt"
+        if not auto_rewrite_on_queue:
+            if existing_clean:
+                final_prompt = sanitize_dialogue_tags(existing_clean)
+                status = "Using pre-generated / edited H3 prompt (Instant Queue)"
+            else:
+                final_prompt = build_local_fallback_h3_prompt(
+                    user_idea=user_idea,
+                    mode=resolved_mode,
+                    effective_duration_sec=effective_sec,
+                    visual_style=visual_style,
+                    ref_bundle=h3_ref_bundle,
+                    dialogue_lines=dialogue_lines,
+                    style_embedding=style_embedding,
+                )
+                status = f"Compiled locally in {resolved_mode} mode (0ms delay)"
+            print(f"[H3-Studio] Prompt ready ({resolved_mode}, {frame_length} frames / {effective_sec}s): {status}")
             return {
                 "ui": {
                     "h3_composed_prompt": [final_prompt],
