@@ -243,11 +243,11 @@ function createNLEStudioWorkspace() {
             <div class="h3-item-row">
               <span class="h3-label" style="width:68px;">AI Model:</span>
               <select class="h3-select" data-nle="ollama-model" style="flex:1;">
-                <option value="minimax-m3:cloud">minimax-m3:cloud [Vision]</option>
-                <option value="qwen3.6:27b">qwen3.6:27b [Vision]</option>
-                <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Vision]</option>
-                <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
-                <option value="glm-5.2:cloud">glm-5.2:cloud</option>
+                <option value="qwen3.6:27b" selected>qwen3.6:27b [Local Vision - Recommended]</option>
+                <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Local Vision]</option>
+                <option value="minimax-m3:cloud">minimax-m3:cloud [Cloud]</option>
+                <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud [Cloud]</option>
+                <option value="glm-5.2:cloud">glm-5.2:cloud [Cloud]</option>
               </select>
             </div>
 
@@ -1129,10 +1129,16 @@ function createNLEStudioWorkspace() {
         const data = await resp.json();
         const models = data.models || [];
         if (models.length > 0) {
+          // Sort local models ahead of :cloud proxy models
+          models.sort((a, b) => {
+            const aCloud = a.name.includes(":cloud") ? 1 : 0;
+            const bCloud = b.name.includes(":cloud") ? 1 : 0;
+            return aCloud - bCloud;
+          });
           elOllamaModel.innerHTML = models
             .map((m) => `<option value="${m.name}">${m.name}${m.has_vision ? " [Vision]" : ""}</option>`)
             .join("");
-          elStatusMsg.textContent = `Loaded ${models.length} models from ${baseUrl}`;
+          elStatusMsg.textContent = `Loaded ${models.length} models from ${baseUrl} (Selected: ${elOllamaModel.value})`;
         }
       }
     } catch (e) {
@@ -1967,11 +1973,11 @@ function setupPromptComposerNodeUI(node) {
     <div class="h3-item-row">
       <span class="h3-label">Ollama Model:</span>
       <select class="h3-select" data-role="model-select" style="flex:1;">
-        <option value="minimax-m3:cloud">minimax-m3:cloud [Vision]</option>
-        <option value="qwen3.6:27b">qwen3.6:27b [Vision]</option>
-        <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Vision]</option>
-        <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
-        <option value="glm-5.2:cloud">glm-5.2:cloud</option>
+        <option value="qwen3.6:27b" selected>qwen3.6:27b [Local Vision - Recommended]</option>
+        <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Local Vision]</option>
+        <option value="minimax-m3:cloud">minimax-m3:cloud [Cloud]</option>
+        <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud [Cloud]</option>
+        <option value="glm-5.2:cloud">glm-5.2:cloud [Cloud]</option>
       </select>
     </div>
 
@@ -2124,13 +2130,19 @@ function setupPromptComposerNodeUI(node) {
         const data = await resp.json();
         const models = data.models || [];
         if (models.length > 0) {
+          models.sort((a, b) => {
+            const aCloud = a.name.includes(":cloud") ? 1 : 0;
+            const bCloud = b.name.includes(":cloud") ? 1 : 0;
+            return aCloud - bCloud;
+          });
           elModelSelect.innerHTML = models
             .map((m) => `<option value="${m.name}">${m.name}${m.has_vision ? " [Vision]" : ""}</option>`)
             .join("");
-          if (wOllamaModel && wOllamaModel.value) {
+          if (wOllamaModel && wOllamaModel.value && models.some((m) => m.name === wOllamaModel.value && !wOllamaModel.value.includes(":cloud"))) {
             elModelSelect.value = wOllamaModel.value;
           } else if (wOllamaModel) {
             wOllamaModel.value = models[0].name;
+            elModelSelect.value = models[0].name;
           }
           elStatusText.textContent = `Connected: ${models.length} models ready`;
         }

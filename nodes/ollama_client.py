@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 DEFAULT_OLLAMA_URL = "https://ollama.smixapp.com"
-DEFAULT_OLLAMA_MODEL = "minimax-m3:cloud"
+DEFAULT_OLLAMA_MODEL = "qwen3.6:27b"
 
 PROMPT_RULES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompt_rules")
 
@@ -54,6 +54,130 @@ def fetch_ollama_models(base_url: str = DEFAULT_OLLAMA_URL, timeout: float = 8.0
             {"name": "glm-5.2:cloud", "capabilities": ["completion"], "has_vision": False},
             {"name": "gemma3:latest", "capabilities": ["completion", "vision"], "has_vision": True},
         ]
+
+
+def _get_failover_model_candidates(base_url: str, primary_model: str) -> List[str]:
+    """
+    Return an ordered list of failover models from the Ollama server (`GET /api/tags`),
+    prioritizing local non-cloud models when a `:cloud` proxy model returns HTTP 500,
+    as well as strong general models.
+    """
+    tags = fetch_ollama_models(base_url=base_url, timeout=5.0)
+    server_names = [m["name"] for m in tags if m.get("name") and m["name"] != primary_model]
+
+    # Prefer local models first (since `:cloud` models on Ollama can return 500 if cloud auth/upstream is down),
+    # then other available models on the server
+    preferred_order = [
+        "qwen3.6:27b",
+        "huihui_ai/Qwen3.8-abliterated:latest",
+        "gemma3:latest",
+        "qwen2.5:14b",
+        "qwen2.5:7b",
+        "llama3.3:latest",
+        "llama3.1:latest",
+        "deepseek-v4-flash:cloud",
+        "glm-5.2:cloud",
+        "minimax-m3:cloud",
+    ]
+    candidates: List[str] = []
+    for p in preferred_order:
+        if p != primary_model and p in server_names and p not in candidates:
+            candidates.append(p)
+    for s in server_names:
+        if s != primary_model and s not in candidates:
+            candidates.append(s)
+    # If /api/tags had no extra models, still include top local defaults
+    for fallback_default in ("qwen3.6:27b", "huihui_ai/Qwen3.8-abliterated:latest", "gemma3:latest"):
+        if fallback_default != primary_model and fallback_default not in candidates:
+            candidates.append(fallback_default)
+    return candidates[:5]
+
+
+def _call_ollama_text(
+    ollama_url: str,
+    model_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.45,
+    timeout: float = 65.0,
+) -> Tuple[Optional[str], str, str]:
+    """
+    Resilient Ollama text completion caller that tries:
+    1. `/api/chat` on the requested `model_name`
+    2. `/api/generate` on the requested `model_name` (in case chat template returns 500)
+    3. Automatic failover across `_get_failover_model_candidates()` if the chosen model
+       returns HTTP 500 Internal Server Error / 404 / 502 / 503.
+    Returns `(response_text_or_None, used_model_name, error_or_status_detail)`.
+    """
+    base = ollama_url.rstrip("/")
+    models_to_try = [model_name] + _get_failover_model_candidates(ollama_url, model_name)
+    last_err = "Unknown error"
+
+    for idx, m_name in enumerate(models_to_try):
+        # Attempt A: /api/chat
+        chat_url = base + "/api/chat"
+        chat_payload = {
+            "model": m_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            "options": {"temperature": float(temperature)},
+        }
+        try:
+            req = urllib.request.Request(
+                chat_url,
+                data=json.dumps(chat_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "ComfyUI-H3-Studio/1.0"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                resp_json = json.loads(resp.read().decode("utf-8"))
+            raw = resp_json.get("message", {}).get("content", "").strip()
+            if not raw and "response" in resp_json:
+                raw = str(resp_json["response"]).strip()
+            if raw:
+                return raw, m_name, ("OK" if idx == 0 else f"Auto-Failover from {model_name} to {m_name}")
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")[:200]
+            except Exception:
+                pass
+            last_err = f"HTTP {e.code} on {m_name}" + (f" ({err_body})" if err_body else f": {e.reason}")
+            print(f"[H3-Studio] /api/chat failed for '{m_name}': {last_err}")
+        except Exception as e:
+            last_err = f"{m_name}: {e}"
+            print(f"[H3-Studio] /api/chat exception for '{m_name}': {last_err}")
+
+        # Attempt B: /api/generate (bypasses broken model chat templates on some Ollama builds)
+        gen_url = base + "/api/generate"
+        gen_payload = {
+            "model": m_name,
+            "system": system_prompt,
+            "prompt": user_prompt,
+            "stream": False,
+            "options": {"temperature": float(temperature)},
+        }
+        try:
+            req_g = urllib.request.Request(
+                gen_url,
+                data=json.dumps(gen_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "ComfyUI-H3-Studio/1.0"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req_g, timeout=timeout) as resp_g:
+                resp_g_json = json.loads(resp_g.read().decode("utf-8"))
+            raw_g = str(resp_g_json.get("response", "")).strip()
+            if raw_g:
+                return raw_g, m_name, (
+                    "OK (/api/generate)" if idx == 0 else f"Auto-Failover to {m_name} (/api/generate)"
+                )
+        except Exception as eg:
+            print(f"[H3-Studio] /api/generate also failed for '{m_name}': {eg}")
+
+    return None, model_name, last_err
 
 
 def sanitize_dialogue_tags(prompt_text: str) -> str:
@@ -367,6 +491,24 @@ def generate_h3_prompt_via_ollama(
         err_msg = f"HTTP {e.code}: {e.reason}"
     except Exception as e:
         err_msg = str(e)
+
+    # Multi-model automatic failover if primary model returns HTTP 500 / 404 / 502 / 503
+    if any(code in err_msg for code in ("500", "404", "502", "503", "Internal Server Error")):
+        raw_alt, used_alt, alt_status = _call_ollama_text(
+            ollama_url=ollama_url,
+            model_name=model_name,
+            system_prompt=system_prompt,
+            user_prompt=user_msg,
+            temperature=temperature,
+            timeout=timeout,
+        )
+        if raw_alt:
+            content_alt = re.sub(r"<think>.*?</think>", "", raw_alt, flags=re.DOTALL).strip()
+            content_alt = re.sub(r"^```[a-zA-Z]*\n?", "", content_alt)
+            content_alt = re.sub(r"\n?```$", "", content_alt).strip()
+            content_alt = sanitize_dialogue_tags(content_alt)
+            if content_alt:
+                return content_alt, f"OK ({alt_status})"
 
     # Local deterministic fallback so workflow never crashes if offline
     print(f"[H3-Studio] Ollama unavailable or timed out ({err_msg}). Using instant local H3 rule compiler.")
@@ -786,43 +928,26 @@ def generate_storyboard_plan_via_ollama(
         f"Output ONLY the JSON array of {batch_seg_count} segments:"
     )
 
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "stream": False,
-        "options": {"temperature": 0.55},
-    }
-
-    url = ollama_url.rstrip("/") + "/api/chat"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "User-Agent": "ComfyUI-H3-Studio/1.0"},
-        method="POST",
-    )
-
     print(f"[H3-Studio] Generating {batch_seg_count}-segment AI EpisodePrompts via Ollama ({model_name})...")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            resp_json = json.loads(resp.read().decode("utf-8"))
-        raw = resp_json.get("message", {}).get("content", "").strip()
-        if not raw and "response" in resp_json:
-            raw = str(resp_json["response"]).strip()
-        parsed = _extract_json_array_robust(raw)
+    raw_resp, used_model, status_detail = _call_ollama_text(
+        ollama_url=ollama_url,
+        model_name=model_name,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.55,
+        timeout=timeout,
+    )
+    if raw_resp:
+        parsed = _extract_json_array_robust(raw_resp)
         if parsed and len(parsed) > 0:
             normalized = _normalize_storyboard_segments(
                 parsed, roster, pacing_mode, avg_seg_sec, default_language, visual_style
             )
-            print(f"[H3-Studio] AI Episode Storyboard ready: {len(normalized)} full H3 prompts compiled.")
-            return normalized, f"AI Episode Generated ({len(normalized)} full H3 prompts via {model_name})"
-    except Exception as e:
-        err_msg = str(e)
-        print(f"[H3-Studio] Storyboard Ollama fallback ({err_msg}). Building deterministic multi-segment plan.")
+            print(f"[H3-Studio] AI Episode Storyboard ready: {len(normalized)} full H3 prompts compiled via {used_model}.")
+            return normalized, f"AI Episode Generated ({len(normalized)} full H3 prompts via {used_model})"
+        err_msg = f"Model {used_model} returned non-JSON text"
     else:
-        err_msg = "Model output could not be parsed as JSON"
+        err_msg = status_detail
 
     fallback_segs = _build_fallback_storyboard(
         story_synopsis=story_synopsis,
