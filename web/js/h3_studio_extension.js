@@ -43,8 +43,110 @@ function findGraphNodeByType(typeName) {
   return app.graph._nodes.find((n) => n.type === typeName) || null;
 }
 
+function findAllGraphNodesByType(typeName) {
+  if (!app.graph || !app.graph._nodes) return [];
+  return app.graph._nodes.filter((n) => n.type === typeName);
+}
+
+function preserveCurrentGraphModelsAndImages() {
+  const saved = {
+    unet: null,
+    clip: null,
+    videoVae: null,
+    audioVae: null,
+    images: [],
+  };
+  if (!app.graph || !app.graph._nodes) return saved;
+  for (const n of app.graph._nodes) {
+    if (n.type === "UNETLoader") {
+      const w = findWidget(n, "unet_name") || (n.widgets && n.widgets[0]);
+      if (w && w.value) saved.unet = w.value;
+    } else if (n.type === "CLIPLoader") {
+      const w = findWidget(n, "clip_name") || (n.widgets && n.widgets[0]);
+      if (w && w.value) saved.clip = w.value;
+    } else if (n.type === "VAELoader") {
+      const w = findWidget(n, "vae_name") || (n.widgets && n.widgets[0]);
+      if (w && w.value) {
+        if ((n.title || "").toLowerCase().includes("audio") || String(w.value).toLowerCase().includes("audio")) {
+          saved.audioVae = w.value;
+        } else {
+          saved.videoVae = w.value;
+        }
+      }
+    } else if (n.type === "LoadImage") {
+      const w = findWidget(n, "image") || (n.widgets && n.widgets[0]);
+      if (w && w.value && w.value !== "example.png") saved.images.push(w.value);
+    }
+  }
+  return saved;
+}
+
+function autoRepairGraphWidgets(savedState) {
+  if (!app.graph || !app.graph._nodes) return;
+  let imgIdx = 0;
+  for (const n of app.graph._nodes) {
+    if (n.type === "UNETLoader") {
+      const w = findWidget(n, "unet_name") || (n.widgets && n.widgets[0]);
+      if (w) {
+        const opts = (w.options && Array.isArray(w.options.values) && w.options.values) || [];
+        if (savedState && savedState.unet && (opts.length === 0 || opts.includes(savedState.unet))) {
+          w.value = savedState.unet;
+        } else if (opts.length > 0 && !opts.includes(w.value)) {
+          const match = opts.find((v) => String(v).toLowerCase().includes("h3") && String(v).toLowerCase().includes("ref")) ||
+                        opts.find((v) => String(v).toLowerCase().includes("h3")) ||
+                        opts[0];
+          if (match) w.value = match;
+        }
+      }
+    } else if (n.type === "CLIPLoader") {
+      const w = findWidget(n, "clip_name") || (n.widgets && n.widgets[0]);
+      if (w) {
+        const opts = (w.options && Array.isArray(w.options.values) && w.options.values) || [];
+        if (savedState && savedState.clip && (opts.length === 0 || opts.includes(savedState.clip))) {
+          w.value = savedState.clip;
+        } else if (opts.length > 0 && !opts.includes(w.value)) {
+          const match = opts.find((v) => String(v).toLowerCase().includes("qwen") && String(v).toLowerCase().includes("h3")) ||
+                        opts.find((v) => String(v).toLowerCase().includes("qwen")) ||
+                        opts[0];
+          if (match) w.value = match;
+        }
+      }
+    } else if (n.type === "VAELoader") {
+      const w = findWidget(n, "vae_name") || (n.widgets && n.widgets[0]);
+      if (w) {
+        const opts = (w.options && Array.isArray(w.options.values) && w.options.values) || [];
+        const isAudio = (n.title || "").toLowerCase().includes("audio") || String(w.value).toLowerCase().includes("audio");
+        const pref = isAudio ? (savedState && savedState.audioVae) : (savedState && savedState.videoVae);
+        if (pref && (opts.length === 0 || opts.includes(pref))) {
+          w.value = pref;
+        } else if (opts.length > 0 && !opts.includes(w.value)) {
+          const match = isAudio
+            ? opts.find((v) => String(v).toLowerCase().includes("audio")) || opts[0]
+            : opts.find((v) => String(v).toLowerCase().includes("video") && String(v).toLowerCase().includes("h3")) ||
+              opts.find((v) => String(v).toLowerCase().includes("h3")) ||
+              opts[0];
+          if (match) w.value = match;
+        }
+      }
+    } else if (n.type === "LoadImage") {
+      const w = findWidget(n, "image") || (n.widgets && n.widgets[0]);
+      if (w) {
+        const opts = (w.options && Array.isArray(w.options.values) && w.options.values) || [];
+        const savedImg = savedState && savedState.images && savedState.images[imgIdx];
+        imgIdx++;
+        if (savedImg && (opts.length === 0 || opts.includes(savedImg))) {
+          w.value = savedImg;
+        } else if (opts.length > 0 && !opts.includes(w.value)) {
+          w.value = opts[0];
+        }
+      }
+    }
+  }
+}
+
 async function loadBundledWorkflow(templateName) {
   try {
+    const savedState = preserveCurrentGraphModelsAndImages();
     const resp = await api.fetchApi(`/h3_studio/workflows/${encodeURIComponent(templateName)}`);
     if (!resp.ok) {
       alert(`Failed to load workflow template: ${templateName}`);
@@ -52,6 +154,9 @@ async function loadBundledWorkflow(templateName) {
     }
     const wfJson = await resp.json();
     await app.loadGraphData(wfJson, true, true, templateName);
+    setTimeout(() => {
+      autoRepairGraphWidgets(savedState);
+    }, 80);
   } catch (err) {
     console.error("[H3 Studio] Failed loading workflow:", err);
   }
@@ -88,6 +193,7 @@ function createNLEStudioWorkspace() {
           <span class="h3-nle-brand-mark">H3 STUDIO</span>
           <span class="h3-nle-brand-title">MINIMAX-H3 OMNI-MODAL NLE &amp; EPISODE DIRECTOR</span>
           <span class="h3-badge h3-badge-green" data-nle="sync-badge">Canvas Linked</span>
+          <span class="h3-badge h3-badge-amber" data-nle="queue-badge">Queue: 0</span>
         </div>
         <div class="h3-nle-topbar-actions">
           <div class="h3-nle-preset-group" title="Load Bundled ComfyUI Workflow Templates">
@@ -101,6 +207,17 @@ function createNLEStudioWorkspace() {
           <button type="button" class="h3-btn h3-btn-danger" data-nle="close-modal">Close [Esc]</button>
         </div>
       </header>
+
+      <!-- Live ComfyUI Execution Progress & Error Strip -->
+      <div class="h3-exec-progress-strip" data-nle="exec-strip">
+        <div class="h3-exec-progress-top">
+          <span data-nle="exec-node-label" style="color:var(--h3-amber-bright); font-weight:700;">Executing ComfyUI Workflow...</span>
+          <span data-nle="exec-step-label" style="color:var(--h3-text-secondary);">Step 0 / 0 (0%)</span>
+        </div>
+        <div class="h3-exec-progress-track">
+          <div class="h3-exec-progress-fill" data-nle="exec-bar-fill"></div>
+        </div>
+      </div>
 
       <!-- 3-Column NLE Workbench -->
       <div class="h3-nle-workbench">
@@ -274,13 +391,16 @@ function createNLEStudioWorkspace() {
               </div>
             </div>
 
-            <!-- Mode Switcher: Single Segment vs Full Episode Storyboard -->
-            <div class="h3-segmented-tabs">
+            <!-- Mode Switcher: Single Segment vs Full Episode Storyboard vs 360° Character Maker -->
+            <div class="h3-segmented-tabs h3-segmented-tabs-3">
               <button type="button" class="h3-seg-tab active" data-nle="tab-single">
-                <span>Single Segment Deck</span>
+                <span>Single Segment</span>
               </button>
               <button type="button" class="h3-seg-tab" data-nle="tab-episode">
-                <span>Episode Storyboard (Long Story)</span>
+                <span>Episode Storyboard</span>
+              </button>
+              <button type="button" class="h3-seg-tab" data-nle="tab-charmaker">
+                <span>360° Character Sheet</span>
               </button>
             </div>
 
@@ -387,6 +507,74 @@ function createNLEStudioWorkspace() {
               </div>
             </div>
 
+            <!-- VIEW C: 360° CHARACTER SHEET GENERATOR DECK -->
+            <div data-nle="view-charmaker" style="display:none; flex-direction:column; gap:10px; flex:1; min-height:0;">
+              <div class="h3-section-box">
+                <div class="h3-section-header">
+                  <span class="h3-label">1. UPLOAD REAL FACE / REFERENCE PHOTO (&lt;Picture 1&gt;)</span>
+                  <span class="h3-badge h3-badge-green" data-nle="cm-photo-badge">example.png</span>
+                </div>
+                <input type="file" accept="image/*" data-nle="cm-file-input" style="display:none;" />
+                <div class="h3-upload-dropzone" data-nle="cm-dropzone" title="Klik untuk upload foto wajah karakter ke LoadImage">
+                  <img class="h3-upload-thumb" data-nle="cm-photo-thumb" src="" alt="Face Ref" style="display:none;" />
+                  <div style="display:flex; flex-direction:column; gap:3px; flex:1;">
+                    <b style="font-size:11px; color:var(--h3-amber-bright);">Klik di sini untuk pilih Foto Wajah / Karakter</b>
+                    <span class="h3-label">Otomatis di-upload ke ComfyUI input &amp; dipasang ke node LoadImage (&lt;Picture 1&gt;).</span>
+                  </div>
+                  <button type="button" class="h3-btn h3-btn-accent" data-nle="cm-upload-btn">Browse Photo</button>
+                </div>
+              </div>
+
+              <div class="h3-section-box">
+                <div class="h3-item-row">
+                  <span class="h3-label" style="width:76px;">Char Name:</span>
+                  <input type="text" class="h3-input" data-nle="cm-char-name" value="Char1" style="flex:1;" placeholder="Char1" />
+                  <span class="h3-label">Spk ID:</span>
+                  <input type="text" class="h3-input" data-nle="cm-spk-id" value="S1" style="width:46px;" />
+                </div>
+                <div class="h3-item-row">
+                  <span class="h3-label" style="width:76px;">Sheet Preset:</span>
+                  <select class="h3-select" data-nle="cm-preset" style="flex:1;">
+                    <option value="6-Panel 360° Turnaround + Face Closeups (124 frames)" selected>6-Panel 360° Turnaround + Face Closeups (124f)</option>
+                    <option value="4-Panel 180° Fast Turnaround + Face (73 frames)">4-Panel 180° Fast Turnaround + Face (73f)</option>
+                    <option value="6-Panel Facial Expressions Sheet (124 frames)">6-Panel Facial Expressions Sheet (124f)</option>
+                    <option value="6-Panel Anime/2D to Photorealistic Live-Action (124 frames)">6-Panel Anime/2D to Photorealistic Live-Action (124f)</option>
+                    <option value="4-Panel Anime/2D to Photorealistic Live-Action (73 frames)">4-Panel Anime/2D to Photorealistic Live-Action (73f)</option>
+                  </select>
+                </div>
+                <div class="h3-item-row">
+                  <span class="h3-label" style="width:76px;">Resolution:</span>
+                  <select class="h3-select" data-nle="cm-resolution" style="flex:1;">
+                    <option value="768 x 1344 (Portrait 9:16 - Recommended for Full Body Turnaround)" selected>768 x 1344 (Portrait 9:16 - Full Body Turnaround)</option>
+                    <option value="1024 x 1024 (Square 1:1 - Recommended for Expressions Sheet)">1024 x 1024 (Square 1:1 - Expressions Sheet)</option>
+                    <option value="1344 x 768 (Landscape 16:9)">1344 x 768 (Landscape 16:9)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="h3-label" style="display:block; margin-bottom:4px;">IDENTITY &amp; OUTFIT SPECIFICATION (&lt;Subject 1&gt;)</span>
+                  <textarea class="h3-textarea" data-nle="cm-outfit-notes" style="min-height:64px;">Use the exact real face, eyes, and hair from &lt;Picture 1&gt;. Dress the character in a clean modern dark jacket and casual trousers.</textarea>
+                </div>
+                <div class="h3-item-row">
+                  <span class="h3-label" style="width:76px;">Voice Trait:</span>
+                  <input type="text" class="h3-input" data-nle="cm-voice-desc" value="clear natural conversational voice" style="flex:1;" />
+                </div>
+              </div>
+
+              <div style="display:flex; gap:6px;">
+                <button type="button" class="h3-btn" data-nle="cm-preview-prompt" style="padding:8px 10px;">
+                  Preview Orbit Prompt
+                </button>
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="cm-generate-btn" style="flex:1; padding:8px 12px;">
+                  Generate 360° Character Sheet Now
+                </button>
+              </div>
+
+              <div style="flex:1; display:flex; flex-direction:column; min-height:90px;">
+                <span class="h3-label" style="margin-bottom:4px;">COMPILED A+B TURNAROUND ORBIT PROMPT (AUTO-BUILT)</span>
+                <textarea class="h3-textarea" data-nle="cm-compiled-prompt" readonly style="flex:1; min-height:85px; font-size:10px; opacity:0.9;" placeholder="Klik 'Preview Orbit Prompt' atau 'Generate 360° Character Sheet Now' untuk menyusun prompt orbit patung 360 derajat..."></textarea>
+              </div>
+            </div>
+
             <div class="h3-status-bar">
               <span data-nle="status-msg">Ready — Connected to Canvas Nodes</span>
             </div>
@@ -424,6 +612,28 @@ function createNLEStudioWorkspace() {
   const elDialogueList = backdrop.querySelector('[data-nle="dialogue-list"]');
   const elCompiledPrompt = backdrop.querySelector('[data-nle="compiled-prompt"]');
   const elStatusMsg = backdrop.querySelector('[data-nle="status-msg"]');
+
+  const elQueueBadge = backdrop.querySelector('[data-nle="queue-badge"]');
+  const elExecStrip = backdrop.querySelector('[data-nle="exec-strip"]');
+  const elExecNodeLabel = backdrop.querySelector('[data-nle="exec-node-label"]');
+  const elExecStepLabel = backdrop.querySelector('[data-nle="exec-step-label"]');
+  const elExecBarFill = backdrop.querySelector('[data-nle="exec-bar-fill"]');
+
+  // 360° Character Sheet Maker DOM refs
+  const elCmPhotoBadge = backdrop.querySelector('[data-nle="cm-photo-badge"]');
+  const elCmFileInput = backdrop.querySelector('[data-nle="cm-file-input"]');
+  const elCmDropzone = backdrop.querySelector('[data-nle="cm-dropzone"]');
+  const elCmPhotoThumb = backdrop.querySelector('[data-nle="cm-photo-thumb"]');
+  const elCmUploadBtn = backdrop.querySelector('[data-nle="cm-upload-btn"]');
+  const elCmCharName = backdrop.querySelector('[data-nle="cm-char-name"]');
+  const elCmSpkId = backdrop.querySelector('[data-nle="cm-spk-id"]');
+  const elCmPreset = backdrop.querySelector('[data-nle="cm-preset"]');
+  const elCmResolution = backdrop.querySelector('[data-nle="cm-resolution"]');
+  const elCmOutfitNotes = backdrop.querySelector('[data-nle="cm-outfit-notes"]');
+  const elCmVoiceDesc = backdrop.querySelector('[data-nle="cm-voice-desc"]');
+  const elCmPreviewPromptBtn = backdrop.querySelector('[data-nle="cm-preview-prompt"]');
+  const elCmGenerateBtn = backdrop.querySelector('[data-nle="cm-generate-btn"]');
+  const elCmCompiledPrompt = backdrop.querySelector('[data-nle="cm-compiled-prompt"]');
 
   let nleState = {
     fps: 24,
@@ -474,8 +684,98 @@ function createNLEStudioWorkspace() {
       if (promptNode._h3RenderNLEDialogues) promptNode._h3RenderNLEDialogues(elDialogueList);
     }
 
+    // 4. Sync from H3CharacterSheetPromptNode & H3CharacterSheetStitcherAndSaver + LoadImage
+    const cmPromptNode = findGraphNodeByType("H3CharacterSheetPromptNode");
+    if (cmPromptNode) {
+      const wCName = findWidget(cmPromptNode, "character_name");
+      const wCPreset = findWidget(cmPromptNode, "sheet_preset");
+      const wCNotes = findWidget(cmPromptNode, "identity_and_outfit_notes");
+      const wCRes = findWidget(cmPromptNode, "aspect_resolution");
+      if (wCName && elCmCharName) elCmCharName.value = wCName.value || "Char1";
+      if (wCPreset && elCmPreset) elCmPreset.value = wCPreset.value;
+      if (wCNotes && elCmOutfitNotes) elCmOutfitNotes.value = wCNotes.value || "";
+      if (wCRes && elCmResolution) elCmResolution.value = wCRes.value;
+    }
+
+    const cmSaverNode = findGraphNodeByType("H3CharacterSheetStitcherAndSaver");
+    if (cmSaverNode) {
+      const wSpk = findWidget(cmSaverNode, "speaker_id");
+      const wVoice = findWidget(cmSaverNode, "voice_desc");
+      if (wSpk && elCmSpkId) elCmSpkId.value = wSpk.value || "S1";
+      if (wVoice && elCmVoiceDesc) elCmVoiceDesc.value = wVoice.value || "";
+    }
+
+    const loadImgNode = findGraphNodeByType("LoadImage");
+    if (loadImgNode) {
+      const wImg = findWidget(loadImgNode, "image");
+      if (wImg && wImg.value && elCmPhotoBadge) {
+        elCmPhotoBadge.textContent = String(wImg.value);
+        if (elCmPhotoThumb) {
+          elCmPhotoThumb.src = api.apiURL(`/view?filename=${encodeURIComponent(wImg.value)}&type=input`);
+          elCmPhotoThumb.style.display = "block";
+        }
+      }
+    }
+
     updateCalcBadge();
     refreshExtenderTimelineFromServer();
+  }
+
+  function pushToCharacterMakerNodes() {
+    let targetW = 768;
+    let targetH = 1344;
+    let targetLen = 124;
+
+    const cmPromptNode = findGraphNodeByType("H3CharacterSheetPromptNode");
+    if (cmPromptNode) {
+      const wCName = findWidget(cmPromptNode, "character_name");
+      const wCPreset = findWidget(cmPromptNode, "sheet_preset");
+      const wCNotes = findWidget(cmPromptNode, "identity_and_outfit_notes");
+      const wCRes = findWidget(cmPromptNode, "aspect_resolution");
+      if (wCName && elCmCharName) wCName.value = elCmCharName.value.trim() || "Char1";
+      if (wCPreset && elCmPreset) wCPreset.value = elCmPreset.value;
+      if (wCNotes && elCmOutfitNotes) wCNotes.value = elCmOutfitNotes.value;
+      if (wCRes && elCmResolution) wCRes.value = elCmResolution.value;
+
+      const resStr = String((wCRes && wCRes.value) || (elCmResolution && elCmResolution.value) || "768 x 1344");
+      const preStr = String((wCPreset && wCPreset.value) || (elCmPreset && elCmPreset.value) || "124");
+      if (resStr.includes("1024 x 1024")) {
+        targetW = 1024;
+        targetH = 1024;
+      } else if (resStr.includes("1344 x 768")) {
+        targetW = 1344;
+        targetH = 768;
+      } else {
+        targetW = 768;
+        targetH = 1344;
+      }
+      targetLen = preStr.includes("4-Panel") ? 73 : 124;
+    }
+
+    // Sync width, height, and length widgets directly on MiniMaxH3ReferenceToVideo
+    const ref2vNode = findGraphNodeByType("MiniMaxH3ReferenceToVideo");
+    if (ref2vNode && cmPromptNode) {
+      const wWidth = findWidget(ref2vNode, "width");
+      const wHeight = findWidget(ref2vNode, "height");
+      const wLength = findWidget(ref2vNode, "length");
+      if (wWidth) wWidth.value = targetW;
+      if (wHeight) wHeight.value = targetH;
+      if (wLength) wLength.value = targetLen;
+    }
+
+    const cmSaverNode = findGraphNodeByType("H3CharacterSheetStitcherAndSaver");
+    if (cmSaverNode) {
+      const wSName = findWidget(cmSaverNode, "character_name");
+      const wSPreset = findWidget(cmSaverNode, "sheet_preset");
+      const wSTraits = findWidget(cmSaverNode, "visual_traits_summary");
+      const wSSpk = findWidget(cmSaverNode, "speaker_id");
+      const wSVoice = findWidget(cmSaverNode, "voice_desc");
+      if (wSName && elCmCharName) wSName.value = elCmCharName.value.trim() || "Char1";
+      if (wSPreset && elCmPreset) wSPreset.value = elCmPreset.value;
+      if (wSTraits && elCmOutfitNotes) wSTraits.value = elCmOutfitNotes.value.trim();
+      if (wSSpk && elCmSpkId) wSSpk.value = elCmSpkId.value.trim() || "S1";
+      if (wSVoice && elCmVoiceDesc) wSVoice.value = elCmVoiceDesc.value.trim() || "clear natural conversational voice";
+    }
   }
 
   function pushToCanvasPromptNode() {
@@ -683,26 +983,92 @@ function createNLEStudioWorkspace() {
     }
   });
 
+  // Tab Switching: Single Segment Deck vs Episode Storyboard vs 360° Character Maker
+  const btnTabSingle = backdrop.querySelector('[data-nle="tab-single"]');
+  const btnTabEpisode = backdrop.querySelector('[data-nle="tab-episode"]');
+  const btnTabCharMaker = backdrop.querySelector('[data-nle="tab-charmaker"]');
+  const viewSingle = backdrop.querySelector('[data-nle="view-single"]');
+  const viewEpisode = backdrop.querySelector('[data-nle="view-episode"]');
+  const viewCharMaker = backdrop.querySelector('[data-nle="view-charmaker"]');
+
+  function activateRightTab(tabName) {
+    btnTabSingle.classList.toggle("active", tabName === "single");
+    btnTabEpisode.classList.toggle("active", tabName === "episode");
+    if (btnTabCharMaker) btnTabCharMaker.classList.toggle("active", tabName === "charmaker");
+    viewSingle.style.display = tabName === "single" ? "flex" : "none";
+    viewEpisode.style.display = tabName === "episode" ? "flex" : "none";
+    if (viewCharMaker) viewCharMaker.style.display = tabName === "charmaker" ? "flex" : "none";
+    if (tabName === "episode") renderStoryboardQueue();
+    if (tabName === "charmaker") refreshCharSheetPromptPreview();
+  }
+
+  btnTabSingle.addEventListener("click", () => activateRightTab("single"));
+  btnTabEpisode.addEventListener("click", () => activateRightTab("episode"));
+  if (btnTabCharMaker) {
+    btnTabCharMaker.addEventListener("click", () => activateRightTab("charmaker"));
+  }
+
   backdrop.querySelector('[data-nle="load-i2v"]').addEventListener("click", async () => {
     await loadBundledWorkflow("H3_I2VA_Interactive_Extender.json");
+    activateRightTab("single");
     setTimeout(pullFromCanvasNodes, 250);
   });
 
   backdrop.querySelector('[data-nle="load-ref2v"]').addEventListener("click", async () => {
     await loadBundledWorkflow("H3_Ref2VA_MultiCharacter_Studio.json");
+    activateRightTab("single");
     setTimeout(pullFromCanvasNodes, 250);
   });
 
   backdrop.querySelector('[data-nle="load-charmaker"]').addEventListener("click", async () => {
     await loadBundledWorkflow("H3_Character_Sheet_Maker.json");
-    setTimeout(pullFromCanvasNodes, 250);
-    elStatusMsg.textContent = "Loaded H3 Character Sheet Maker workflow — upload a real face photo in LoadImage and Queue!";
+    activateRightTab("charmaker");
+    setTimeout(() => {
+      pullFromCanvasNodes();
+      refreshCharSheetPromptPreview();
+    }, 250);
+    elStatusMsg.textContent = "Loaded 360° Character Sheet Maker — pilih foto wajah di panel kanan lalu klik 'Generate 360° Character Sheet Now'!";
   });
 
-  backdrop.querySelector('[data-nle="queue-now"]').addEventListener("click", () => {
+  async function safeQueuePrompt(labelText = "Submitting workflow to ComfyUI Queue...") {
+    autoRepairGraphWidgets();
+    elExecStrip.classList.remove("error");
+    elExecStrip.classList.add("active");
+    elExecNodeLabel.textContent = labelText;
+    elExecStepLabel.textContent = "Validating...";
+    elExecBarFill.style.width = "6%";
+    try {
+      const res = await app.queuePrompt(0, 1);
+      if (res && res.node_errors && Object.keys(res.node_errors).length > 0) {
+        const firstNodeId = Object.keys(res.node_errors)[0];
+        const nErr = res.node_errors[firstNodeId];
+        const errList = (nErr && nErr.errors) || [];
+        const msg = errList.length > 0 ? `${errList[0].message}: ${errList[0].details || ""}` : JSON.stringify(nErr);
+        const nodeLabel = (nErr && nErr.class_type) || `Node #${firstNodeId}`;
+        elExecStrip.classList.add("active", "error");
+        elExecNodeLabel.textContent = `VALIDATION ERROR in ${nodeLabel}: ${msg}`;
+        elExecStepLabel.textContent = "Rejected";
+        elExecBarFill.style.width = "100%";
+        elStatusMsg.textContent = `[Validation Error in ${nodeLabel}] ${msg}`;
+        return false;
+      }
+      elExecStepLabel.textContent = "Queued";
+      elStatusMsg.textContent = "Queued in ComfyUI — live node & step progress will appear at the top bar.";
+      return true;
+    } catch (err) {
+      elExecStrip.classList.add("active", "error");
+      elExecNodeLabel.textContent = `QUEUE ERROR: ${err.message || String(err)}`;
+      elExecStepLabel.textContent = "Failed";
+      elExecBarFill.style.width = "100%";
+      elStatusMsg.textContent = `[Queue Error] ${err.message || String(err)}`;
+      return false;
+    }
+  }
+
+  backdrop.querySelector('[data-nle="queue-now"]').addEventListener("click", async () => {
     pushToCanvasPromptNode();
-    app.queuePrompt(0, 1);
-    elStatusMsg.textContent = "Queued generation in ComfyUI — segments will auto-append on completion.";
+    pushToCharacterMakerNodes();
+    await safeQueuePrompt("Submitting workflow to ComfyUI Queue...");
   });
 
   elMasterCharToggle.addEventListener("change", (e) => {
@@ -757,25 +1123,193 @@ function createNLEStudioWorkspace() {
     });
   }
 
-  // Tab Switching: Single Segment Deck vs Episode Storyboard (Auto-10m)
-  const btnTabSingle = backdrop.querySelector('[data-nle="tab-single"]');
-  const btnTabEpisode = backdrop.querySelector('[data-nle="tab-episode"]');
-  const viewSingle = backdrop.querySelector('[data-nle="view-single"]');
-  const viewEpisode = backdrop.querySelector('[data-nle="view-episode"]');
+  // 360° Character Sheet Maker Interactive Handlers (Upload Photo, Preview Prompt, Queue)
+  async function refreshCharSheetPromptPreview() {
+    if (!elCmCompiledPrompt) return;
+    pushToCharacterMakerNodes();
+    try {
+      const resp = await api.fetchApi("/h3_studio/characters/preview_prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          character_name: elCmCharName ? elCmCharName.value : "Char1",
+          sheet_preset: elCmPreset ? elCmPreset.value : "6-Panel 360° Turnaround + Face Closeups (124 frames)",
+          identity_and_outfit_notes: elCmOutfitNotes ? elCmOutfitNotes.value : "",
+          aspect_resolution: elCmResolution
+            ? elCmResolution.value
+            : "768 x 1344 (Portrait 9:16 - Recommended for Full Body Turnaround)",
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        elCmCompiledPrompt.value = data.prompt || "";
+        elFrameCalcBadge.textContent = `${data.frame_length}f (${data.width}x${data.height})`;
+      }
+    } catch (e) {}
+  }
 
-  btnTabSingle.addEventListener("click", () => {
-    btnTabSingle.classList.add("active");
-    btnTabEpisode.classList.remove("active");
-    viewSingle.style.display = "flex";
-    viewEpisode.style.display = "none";
+  async function uploadFacePhotoToComfyUI(file) {
+    if (!file) return;
+    elStatusMsg.textContent = `Uploading '${file.name}' to ComfyUI input...`;
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      formData.append("overwrite", "true");
+      formData.append("type", "input");
+
+      const resp = await api.fetchApi("/upload/image", {
+        method: "POST",
+        body: formData,
+      });
+      if (!resp.ok) {
+        elStatusMsg.textContent = `Upload failed: HTTP ${resp.status}`;
+        return;
+      }
+      const res = await resp.json();
+      const uploadedName = res.name || file.name;
+
+      // Ensure Character Sheet Maker workflow is loaded if neither H3CharacterSheetPromptNode nor LoadImage exists
+      if (!findGraphNodeByType("H3CharacterSheetPromptNode")) {
+        await loadBundledWorkflow("H3_Character_Sheet_Maker.json");
+      }
+
+      const loadImgNode = findGraphNodeByType("LoadImage");
+      if (loadImgNode) {
+        const wImg = findWidget(loadImgNode, "image");
+        if (wImg) {
+          if (wImg.options && Array.isArray(wImg.options.values) && !wImg.options.values.includes(uploadedName)) {
+            wImg.options.values.push(uploadedName);
+          }
+          wImg.value = uploadedName;
+          if (typeof wImg.callback === "function") {
+            try {
+              wImg.callback(uploadedName);
+            } catch (e) {}
+          }
+        }
+      }
+
+      if (elCmPhotoBadge) elCmPhotoBadge.textContent = uploadedName;
+      const viewUrl = api.apiURL(`/view?filename=${encodeURIComponent(uploadedName)}&type=input&t=${Date.now()}`);
+      if (elCmPhotoThumb) {
+        elCmPhotoThumb.src = viewUrl;
+        elCmPhotoThumb.style.display = "block";
+      }
+      // Also preview the uploaded face photo in the center Program Monitor before generation!
+      elMonitorImg.src = viewUrl;
+      elMonitorImg.style.display = "block";
+      elMonitorEmpty.style.display = "none";
+      elStatusMsg.textContent = `Uploaded '${uploadedName}' as <Picture 1> Face Reference — ready to generate 360° Character Sheet!`;
+    } catch (err) {
+      elStatusMsg.textContent = `Photo upload error: ${err.message}`;
+    }
+  }
+
+  if (elCmDropzone && elCmFileInput) {
+    elCmDropzone.addEventListener("click", (e) => {
+      if (e.target === elCmFileInput) return;
+      elCmFileInput.click();
+    });
+    elCmFileInput.addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) uploadFacePhotoToComfyUI(f);
+    });
+  }
+  if (elCmCharName) elCmCharName.addEventListener("input", refreshCharSheetPromptPreview);
+  if (elCmSpkId) elCmSpkId.addEventListener("input", pushToCharacterMakerNodes);
+  if (elCmPreset) elCmPreset.addEventListener("change", refreshCharSheetPromptPreview);
+  if (elCmResolution) elCmResolution.addEventListener("change", refreshCharSheetPromptPreview);
+  if (elCmOutfitNotes) elCmOutfitNotes.addEventListener("input", refreshCharSheetPromptPreview);
+  if (elCmVoiceDesc) elCmVoiceDesc.addEventListener("input", pushToCharacterMakerNodes);
+  if (elCmPreviewPromptBtn) {
+    elCmPreviewPromptBtn.addEventListener("click", async () => {
+      await refreshCharSheetPromptPreview();
+      elStatusMsg.textContent = "Updated A+B 360° Turnaround Orbit Prompt preview.";
+    });
+  }
+  if (elCmGenerateBtn) {
+    elCmGenerateBtn.addEventListener("click", async () => {
+      if (!findGraphNodeByType("H3CharacterSheetPromptNode")) {
+        await loadBundledWorkflow("H3_Character_Sheet_Maker.json");
+      }
+      pushToCharacterMakerNodes();
+      await refreshCharSheetPromptPreview();
+      await safeQueuePrompt("Starting 360° Character Sheet Generation in ComfyUI...");
+    });
+  }
+
+  // Subscribe to ComfyUI WebSocket Events so user ALWAYS sees live progress, node name, steps, & errors!
+  api.addEventListener("status", (ev) => {
+    const qRem = ev.detail?.exec_info?.queue_remaining ?? 0;
+    if (elQueueBadge) {
+      elQueueBadge.textContent = `Queue: ${qRem}`;
+    }
   });
 
-  btnTabEpisode.addEventListener("click", () => {
-    btnTabEpisode.classList.add("active");
-    btnTabSingle.classList.remove("active");
-    viewSingle.style.display = "none";
-    viewEpisode.style.display = "flex";
-    renderStoryboardQueue();
+  api.addEventListener("execution_start", () => {
+    if (elExecStrip) {
+      elExecStrip.classList.remove("error");
+      elExecStrip.classList.add("active");
+      elExecNodeLabel.textContent = "ComfyUI Execution Started...";
+      elExecStepLabel.textContent = "Initializing...";
+      elExecBarFill.style.width = "8%";
+    }
+  });
+
+  api.addEventListener("executing", (ev) => {
+    const nodeId = ev.detail;
+    if (nodeId === null || nodeId === undefined) {
+      // Execution finished
+      if (elExecStrip && !elExecStrip.classList.contains("error")) {
+        elExecNodeLabel.textContent = "Generation Complete!";
+        elExecStepLabel.textContent = "100%";
+        elExecBarFill.style.width = "100%";
+        setTimeout(() => {
+          if (elExecStrip && !elExecStrip.classList.contains("error")) {
+            elExecStrip.classList.remove("active");
+          }
+        }, 2500);
+      }
+      return;
+    }
+    let nodeTitle = `Node #${nodeId}`;
+    if (app.graph && typeof app.graph.getNodeById === "function") {
+      const n = app.graph.getNodeById(Number(nodeId));
+      if (n) nodeTitle = n.title || n.type || nodeTitle;
+    }
+    if (elExecStrip) {
+      elExecStrip.classList.remove("error");
+      elExecStrip.classList.add("active");
+      elExecNodeLabel.textContent = `Running: ${nodeTitle}`;
+    }
+    elStatusMsg.textContent = `ComfyUI Executing: ${nodeTitle}...`;
+  });
+
+  api.addEventListener("progress", (ev) => {
+    const d = ev.detail || {};
+    const val = Number(d.value || 0);
+    const max = Math.max(1, Number(d.max || 1));
+    const pct = Math.min(100, Math.round((val / max) * 100));
+    if (elExecStrip) {
+      elExecStrip.classList.remove("error");
+      elExecStrip.classList.add("active");
+      elExecStepLabel.textContent = `Step ${val} / ${max} (${pct}%)`;
+      elExecBarFill.style.width = `${pct}%`;
+    }
+    elStatusMsg.textContent = `Sampling video frames: Step ${val} / ${max} (${pct}%)...`;
+  });
+
+  api.addEventListener("execution_error", (ev) => {
+    const d = ev.detail || {};
+    const errNode = d.node_type || d.node_id || "Node";
+    const errMsg = d.exception_message || "Execution error in ComfyUI";
+    if (elExecStrip) {
+      elExecStrip.classList.add("active", "error");
+      elExecNodeLabel.textContent = `ERROR in ${errNode}: ${errMsg}`;
+      elExecStepLabel.textContent = "Failed";
+      elExecBarFill.style.width = "100%";
+    }
+    elStatusMsg.textContent = `[ComfyUI Error in ${errNode}] ${errMsg}`;
   });
 
   // Episode Storyboard State & Autopilot Engine
@@ -1255,6 +1789,15 @@ function createNLEStudioWorkspace() {
   nleStudioInstance = {
     open: () => {
       backdrop.classList.add("open");
+      pullFromCanvasNodes();
+    },
+    showCharacterSheetResult: (info) => {
+      if (!info || !info.character_id) return;
+      const sheetUrl = api.apiURL(`/h3_studio/characters/sheet/${encodeURIComponent(info.character_id)}?t=${Date.now()}`);
+      elMonitorImg.src = sheetUrl;
+      elMonitorImg.style.display = "block";
+      elMonitorEmpty.style.display = "none";
+      elStatusMsg.textContent = info.status || `Saved 360° Character Sheet '${info.name}' (${info.character_id}) to Library!`;
       pullFromCanvasNodes();
     },
     refreshSummary: (summary, nodeId) => {
@@ -2304,8 +2847,92 @@ function setupPromptComposerNodeUI(node) {
 }
 
 // ============================================================================
-// 5. H3CharacterSheetStitcherAndSaver Canvas Node UI
+// 5. H3CharacterSheetPromptNode & H3CharacterSheetStitcherAndSaver Canvas UI
 // ============================================================================
+function setupCharacterSheetPromptNodeUI(node) {
+  const panel = document.createElement("div");
+  panel.className = "h3-studio-panel";
+  panel.innerHTML = `
+    <div class="h3-studio-header">
+      <div class="h3-studio-title">
+        <span>360° CHARACTER MAKER ENGINE</span>
+        <span class="h3-badge h3-badge-amber" data-role="cm-node-badge">Ready</span>
+      </div>
+      <button type="button" class="h3-btn h3-btn-primary" data-action="open-nle">Open Studio NLE</button>
+    </div>
+    <div style="display:flex; gap:6px;">
+      <button type="button" class="h3-btn h3-btn-accent" data-action="run-sheet" style="flex:1; padding:8px; font-weight:700;">
+        Generate 360° Character Sheet Now
+      </button>
+    </div>
+    <div class="h3-status-bar">
+      <span data-role="cm-node-status">Connect face photo to real_face_image or upload inside Studio NLE</span>
+    </div>
+  `;
+
+  const elBadge = panel.querySelector('[data-role="cm-node-badge"]');
+  const elStatus = panel.querySelector('[data-role="cm-node-status"]');
+
+  panel.querySelector('[data-action="open-nle"]').addEventListener("click", () => {
+    createNLEStudioWorkspace().open();
+  });
+
+  panel.querySelector('[data-action="run-sheet"]').addEventListener("click", async () => {
+    autoRepairGraphWidgets();
+    elBadge.textContent = "Queued";
+    elStatus.textContent = "Submitting 360° Character Sheet workflow to ComfyUI...";
+    try {
+      const res = await app.queuePrompt(0, 1);
+      if (res && res.node_errors && Object.keys(res.node_errors).length > 0) {
+        const firstId = Object.keys(res.node_errors)[0];
+        const nErr = res.node_errors[firstId];
+        const msg = (nErr.errors && nErr.errors[0] && nErr.errors[0].message) || "Validation error";
+        elBadge.textContent = "Error";
+        elStatus.textContent = `Validation Error (${nErr.class_type || firstId}): ${msg}`;
+      }
+    } catch (err) {
+      elBadge.textContent = "Error";
+      elStatus.textContent = `Error: ${err.message || String(err)}`;
+    }
+  });
+
+  api.addEventListener("executing", (ev) => {
+    const nid = ev.detail;
+    if (nid === null || nid === undefined) {
+      elBadge.textContent = "Done";
+      return;
+    }
+    let title = `Node #${nid}`;
+    if (app.graph && typeof app.graph.getNodeById === "function") {
+      const n = app.graph.getNodeById(Number(nid));
+      if (n) title = n.title || n.type || title;
+    }
+    elBadge.textContent = "Running";
+    elStatus.textContent = `Executing: ${title}`;
+  });
+
+  api.addEventListener("progress", (ev) => {
+    const d = ev.detail || {};
+    const val = Number(d.value || 0);
+    const max = Math.max(1, Number(d.max || 1));
+    const pct = Math.min(100, Math.round((val / max) * 100));
+    elBadge.textContent = `${pct}%`;
+    elStatus.textContent = `Sampling Orbit Video: Step ${val}/${max} (${pct}%)`;
+  });
+
+  api.addEventListener("execution_error", (ev) => {
+    const d = ev.detail || {};
+    elBadge.textContent = "Error";
+    elStatus.textContent = `Error in ${d.node_type || "Node"}: ${d.exception_message || "Failed"}`;
+  });
+
+  node.addDOMWidget("h3_char_prompt_dom", "custom_dom", panel, {
+    serialize: false,
+    hideOnZoom: false,
+  });
+  node.setSize([440, 430]);
+}
+
 function setupCharacterSheetStitcherUI(node) {
   const panel = document.createElement("div");
   panel.className = "h3-studio-panel";
@@ -2346,8 +2973,9 @@ function setupCharacterSheetStitcherUI(node) {
   const origOnExecuted = node.onExecuted;
   node.onExecuted = function (output) {
     if (origOnExecuted) origOnExecuted.apply(this, arguments);
-    if (output && output.h3_saved_character && output.h3_saved_character[0]) {
-      const info = output.h3_saved_character[0];
+    const charList = (output && (output.h3_saved_character || output.h3_charsheet_preview)) || null;
+    if (charList && charList[0]) {
+      const info = charList[0];
       if (info.character_id) {
         elBadge.textContent = info.character_id;
         elStatus.textContent = info.status || `Saved '${info.name}' to Character Library`;
@@ -2355,6 +2983,7 @@ function setupCharacterSheetStitcherUI(node) {
         elImg.style.display = "block";
         elEmpty.style.display = "none";
         fetchSavedCharacterLibrary();
+        createNLEStudioWorkspace().showCharacterSheetResult(info);
       }
     }
   };
@@ -2383,6 +3012,9 @@ app.registerExtension({
     } else if (t === "H3AIPromptComposer" && !node._h3UiInitialized) {
       node._h3UiInitialized = true;
       setupPromptComposerNodeUI(node);
+    } else if (t === "H3CharacterSheetPromptNode" && !node._h3UiInitialized) {
+      node._h3UiInitialized = true;
+      setupCharacterSheetPromptNodeUI(node);
     } else if (t === "H3CharacterSheetStitcherAndSaver" && !node._h3UiInitialized) {
       node._h3UiInitialized = true;
       setupCharacterSheetStitcherUI(node);
@@ -2425,6 +3057,15 @@ app.registerExtension({
         if (!this._h3UiInitialized) {
           this._h3UiInitialized = true;
           setupPromptComposerNodeUI(this);
+        }
+      };
+    } else if (nodeData.name === "H3CharacterSheetPromptNode") {
+      const origCreated = nodeType.prototype.onNodeCreated;
+      nodeType.prototype.onNodeCreated = function () {
+        if (origCreated) origCreated.apply(this, arguments);
+        if (!this._h3UiInitialized) {
+          this._h3UiInitialized = true;
+          setupCharacterSheetPromptNodeUI(this);
         }
       };
     } else if (nodeData.name === "H3CharacterSheetStitcherAndSaver") {

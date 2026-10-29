@@ -10,7 +10,12 @@ import os
 from typing import Any, Dict
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
-from .nodes.character_maker_node import CHARACTER_LIBRARY_DIR, _slugify_char_name, list_saved_characters
+from .nodes.character_maker_node import (
+    CHARACTER_LIBRARY_DIR,
+    H3CharacterSheetPromptNode,
+    _slugify_char_name,
+    list_saved_characters,
+)
 from .nodes.model_lora_node import get_available_loras
 from .nodes.ollama_client import (
     DEFAULT_OLLAMA_MODEL,
@@ -216,6 +221,45 @@ try:
     @routes.get("/h3_studio/characters/library")
     async def api_get_character_library(request: "web.Request") -> "web.Response":
         return web.json_response({"characters": list_saved_characters()})
+
+    @routes.post("/h3_studio/characters/preview_prompt")
+    async def api_post_preview_charsheet_prompt(request: "web.Request") -> "web.Response":
+        data: Dict[str, Any] = await request.json()
+        char_name = str(data.get("character_name", "Char1"))
+        sheet_preset = str(
+            data.get("sheet_preset", "6-Panel 360° Turnaround + Face Closeups (124 frames)")
+        )
+        notes = str(data.get("identity_and_outfit_notes", ""))
+        aspect_res = str(
+            data.get(
+                "aspect_resolution",
+                "768 x 1344 (Portrait 9:16 - Recommended for Full Body Turnaround)",
+            )
+        )
+        has_outfit = bool(data.get("has_outfit_ref", False))
+        has_acc = bool(data.get("has_accessory_ref", False))
+        has_extra = bool(data.get("has_extra_ref", False))
+
+        builder = H3CharacterSheetPromptNode()
+        full_prompt, frame_length, width, height, *_ = builder.build_sheet_prompt(
+            character_name=char_name,
+            sheet_preset=sheet_preset,
+            identity_and_outfit_notes=notes,
+            aspect_resolution=aspect_res,
+            real_face_image=True,
+            outfit_ref_image_2=True if has_outfit else None,
+            accessory_ref_image_3=True if has_acc else None,
+            extra_ref_image_4=True if has_extra else None,
+        )
+        return web.json_response(
+            {
+                "prompt": full_prompt,
+                "frame_length": frame_length,
+                "width": width,
+                "height": height,
+                "sheet_preset": sheet_preset,
+            }
+        )
 
     @routes.get("/h3_studio/characters/sheet/{character_id}")
     async def api_get_character_sheet_img(request: "web.Request") -> "web.Response":

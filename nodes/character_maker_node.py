@@ -366,6 +366,9 @@ class H3CharacterSheetPromptNode:
         else:
             b_prompt = B_PROMPT_STANDARD_ORBIT_6_PANEL
 
+        if real_face_image is None and torch is not None:
+            real_face_image = torch.full((1, height, width, 3), 0.5, dtype=torch.float32)
+
         full_prompt = f"{a_prompt}\n\n{b_prompt}"
         return (
             full_prompt,
@@ -400,6 +403,8 @@ class H3CharacterSheetStitcherAndSaver:
                         "6-Panel 360° Turnaround + Face Closeups (124 frames)",
                         "4-Panel 180° Fast Turnaround + Face (73 frames)",
                         "6-Panel Facial Expressions Sheet (124 frames)",
+                        "6-Panel Anime/2D to Photorealistic Live-Action (124 frames)",
+                        "4-Panel Anime/2D to Photorealistic Live-Action (73 frames)",
                     ],
                     {"default": "6-Panel 360° Turnaround + Face Closeups (124 frames)"},
                 ),
@@ -476,17 +481,18 @@ class H3CharacterSheetStitcherAndSaver:
             print(f"[H3-Studio] Saved Character Sheet '{char_id}' to {sheet_file_path}")
 
         preview_b64 = tensor_to_base64_jpeg(grid_tensor, index=0, max_side=768)
+        payload_item = {
+            "character_id": char_id,
+            "name": character_name,
+            "picked_frames": picked_indices,
+            "sheet_b64": preview_b64,
+            "library_path": sheet_file_path,
+            "status": f"Saved '{character_name}' ({char_id}) to Character Library ({len(picked_indices)} panels)",
+        }
         return {
             "ui": {
-                "h3_charsheet_preview": [
-                    {
-                        "character_id": char_id,
-                        "name": character_name,
-                        "picked_frames": picked_indices,
-                        "sheet_b64": preview_b64,
-                        "library_path": sheet_file_path,
-                    }
-                ]
+                "h3_charsheet_preview": [payload_item],
+                "h3_saved_character": [payload_item],
             },
             "result": (grid_tensor, panel_batch, char_id, sheet_file_path),
         }
