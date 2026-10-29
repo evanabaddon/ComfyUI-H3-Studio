@@ -1,0 +1,17 @@
+[project]
+name = "comfyui-h3-studio"
+description = "Interactive Video + Audio Timeline Extender, Multi-Character On/Off Reference Hub, Fast Attention + Unlimited Dynamic LoRA Stack, and AI Prompt Composer (Ollama smixapp.com with <d> dialogue rules) for MiniMax-H3."
+version = "1.0.0"
+license = { text = "MIT" }
+dependencies = [
+    "numpy",
+    "Pillow",
+]
+
+[project.urls]
+Repository = "https://github.com/MiniMax-AI/MiniMax-H3"
+
+[tool.comfy]
+PublisherId = "h3-studio"
+DisplayName = "ComfyUI-H3-Studio (MiniMax-H3 Video Extender & AI Prompt Suite)"
+Icon = ""

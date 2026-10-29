@@ -1,0 +1,326 @@
+{
+  "last_node_id": 15,
+  "last_link_id": 22,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "UNETLoader",
+      "pos": [40, 60],
+      "size": [320, 90],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [{"name": "MODEL", "type": "MODEL", "links": [1]}],
+      "title": "1. Load MiniMax-H3 FL2VA Model",
+      "widgets_values": ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "default"]
+    },
+    {
+      "id": 2,
+      "type": "CLIPLoader",
+      "pos": [40, 190],
+      "size": [320, 110],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "outputs": [{"name": "CLIP", "type": "CLIP", "links": [2]}],
+      "title": "2. Load Qwen3-VL 32B H3 Encoder",
+      "widgets_values": ["qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "minimax", "default"]
+    },
+    {
+      "id": 3,
+      "type": "VAELoader",
+      "pos": [40, 340],
+      "size": [320, 60],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "outputs": [{"name": "VAE", "type": "VAE", "links": [7, 13]}],
+      "title": "3. Load H3 Video VAE",
+      "widgets_values": ["minimax_h3_video_vae_int8_convrot.safetensors"]
+    },
+    {
+      "id": 4,
+      "type": "VAELoader",
+      "pos": [40, 440],
+      "size": [320, 60],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "outputs": [{"name": "VAE", "type": "VAE", "links": [14]}],
+      "title": "4. Load H3 Audio VAE (32kHz Stereo)",
+      "widgets_values": ["minimax_h3_audio_vae_fp32.safetensors"]
+    },
+    {
+      "id": 5,
+      "type": "H3ModelSpeedAndLoraHub",
+      "pos": [400, 60],
+      "size": [410, 420],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {"name": "model", "type": "MODEL", "link": 1},
+        {"name": "clip", "type": "CLIP", "link": 2}
+      ],
+      "outputs": [
+        {"name": "model", "type": "MODEL", "links": [3, 4]},
+        {"name": "clip", "type": "CLIP", "links": [5]},
+        {"name": "recommended_steps", "type": "INT", "links": [6]},
+        {"name": "optimization_report", "type": "STRING", "links": null}
+      ],
+      "title": "5. H3 Fast Attention & Unlimited LoRA Hub",
+      "widgets_values": [
+        "auto (SageAttn -> FlashAttn2 -> SDPA)",
+        true,
+        true,
+        false,
+        20,
+        "[{\"enabled\":true,\"name\":\"minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors\",\"model_strength\":1.0,\"clip_strength\":1.0}]"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "H3AIPromptComposer",
+      "pos": [400, 520],
+      "size": [460, 620],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {"name": "h3_ref_bundle", "type": "H3_REF_BUNDLE", "link": null},
+        {"name": "first_frame_image", "type": "IMAGE", "link": 18},
+        {"name": "last_frame_image", "type": "IMAGE", "link": null},
+        {"name": "extender_context", "type": "H3_EXT_CTX", "link": 19}
+      ],
+      "outputs": [
+        {"name": "h3_prompt", "type": "STRING", "links": [8]},
+        {"name": "frame_length_17k5", "type": "INT", "links": [9]},
+        {"name": "effective_duration_sec", "type": "FLOAT", "links": null},
+        {"name": "resolved_mode", "type": "STRING", "links": null},
+        {"name": "ai_status", "type": "STRING", "links": null}
+      ],
+      "title": "6. H3 AI Prompt Composer (ollama.smixapp.com + <d>)",
+      "widgets_values": [
+        "Seorang wanita muda duduk di dekat jendela kereta saat hujan malam hari, menatap lampu kota lalu berbicara pelan.",
+        "Auto (Ref2VA if Characters ON, I2VA if First-Frame, else T2VA)",
+        5.0,
+        "Live-action, cinematic",
+        "none",
+        "https://ollama.smixapp.com",
+        "minimax-m3:cloud",
+        true,
+        true,
+        "[{\"speaker\":\"(S1)\",\"language\":\"Indonesian\",\"text\":\"Aku turun di stasiun berikutnya.\",\"delivery\":\"quiet breathy female voice\",\"voiceover\":false}]",
+        ""
+      ]
+    },
+    {
+      "id": 7,
+      "type": "MiniMaxH3ImageToVideo",
+      "pos": [910, 260],
+      "size": [360, 260],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {"name": "clip", "type": "CLIP", "link": 5},
+        {"name": "vae", "type": "VAE", "link": 7},
+        {"name": "first_frame", "type": "IMAGE", "link": 17},
+        {"name": "last_frame", "type": "IMAGE", "link": null},
+        {"name": "prompt", "type": "STRING", "link": 8},
+        {"name": "length", "type": "INT", "link": 9}
+      ],
+      "outputs": [
+        {"name": "positive", "type": "CONDITIONING", "links": [10]},
+        {"name": "LATENT", "type": "LATENT", "links": [11]}
+      ],
+      "title": "7. MiniMaxH3ImageToVideo (T2VA / I2VA / FL2VA)",
+      "widgets_values": ["", 1344, 768, 124]
+    },
+    {
+      "id": 8,
+      "type": "BasicGuider",
+      "pos": [1320, 80],
+      "size": [220, 60],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {"name": "model", "type": "MODEL", "link": 3},
+        {"name": "conditioning", "type": "CONDITIONING", "link": 10}
+      ],
+      "outputs": [{"name": "GUIDER", "type": "GUIDER", "links": [12]}],
+      "title": "BasicGuider"
+    },
+    {
+      "id": 9,
+      "type": "BasicScheduler",
+      "pos": [1320, 180],
+      "size": [220, 110],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {"name": "model", "type": "MODEL", "link": 4},
+        {"name": "steps", "type": "INT", "link": 6}
+      ],
+      "outputs": [{"name": "SIGMAS", "type": "SIGMAS", "links": [15]}],
+      "title": "BasicScheduler (Auto-Steps from LoRA Hub)",
+      "widgets_values": ["simple", 8, 1.0]
+    },
+    {
+      "id": 10,
+      "type": "KSamplerSelect",
+      "pos": [1320, 320],
+      "size": [220, 60],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "outputs": [{"name": "SAMPLER", "type": "SAMPLER", "links": [16]}],
+      "widgets_values": ["res_multistep"]
+    },
+    {
+      "id": 11,
+      "type": "RandomNoise",
+      "pos": [1320, 410],
+      "size": [220, 80],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "outputs": [{"name": "NOISE", "type": "NOISE", "links": [20]}],
+      "widgets_values": [42, "randomize"]
+    },
+    {
+      "id": 12,
+      "type": "SamplerCustomAdvanced",
+      "pos": [1580, 180],
+      "size": [260, 160],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {"name": "noise", "type": "NOISE", "link": 20},
+        {"name": "guider", "type": "GUIDER", "link": 12},
+        {"name": "sampler", "type": "SAMPLER", "link": 16},
+        {"name": "sigmas", "type": "SIGMAS", "link": 15},
+        {"name": "latent_image", "type": "LATENT", "link": 11}
+      ],
+      "outputs": [
+        {"name": "output", "type": "LATENT", "links": [21, 22]},
+        {"name": "denoised_output", "type": "LATENT", "links": null}
+      ],
+      "title": "8. H3 Joint Video+Audio Sampler"
+    },
+    {
+      "id": 13,
+      "type": "VAEDecode",
+      "pos": [1880, 160],
+      "size": [200, 60],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {"name": "samples", "type": "LATENT", "link": 21},
+        {"name": "vae", "type": "VAE", "link": 13}
+      ],
+      "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [23]}],
+      "title": "Decode Video Frames"
+    },
+    {
+      "id": 14,
+      "type": "VAEDecodeAudio",
+      "pos": [1880, 260],
+      "size": [200, 60],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {"name": "samples", "type": "LATENT", "link": 22},
+        {"name": "vae", "type": "VAE", "link": 14}
+      ],
+      "outputs": [{"name": "AUDIO", "type": "AUDIO", "links": [24]}],
+      "title": "Decode Stereo Audio (32kHz)"
+    },
+    {
+      "id": 15,
+      "type": "H3InteractiveVideoExtender",
+      "pos": [2130, 120],
+      "size": [430, 520],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 23},
+        {"name": "audio", "type": "AUDIO", "link": 24}
+      ],
+      "outputs": [
+        {"name": "reference_frame", "type": "IMAGE", "links": [17, 18]},
+        {"name": "stitched_images", "type": "IMAGE", "links": [25]},
+        {"name": "stitched_audio", "type": "AUDIO", "links": [26]},
+        {"name": "extender_context", "type": "H3_EXT_CTX", "links": [19]},
+        {"name": "total_frames", "type": "INT", "links": null}
+      ],
+      "title": "9. H3 Interactive Video & Audio Extender (Editor)",
+      "widgets_values": [24.0, "append_new_segment", true, 40, -1, false, "{}"]
+    },
+    {
+      "id": 16,
+      "type": "CreateVideo",
+      "pos": [2610, 160],
+      "size": [220, 90],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 25},
+        {"name": "audio", "type": "AUDIO", "link": 26}
+      ],
+      "outputs": [{"name": "VIDEO", "type": "VIDEO", "links": [27]}],
+      "widgets_values": [24, 8]
+    },
+    {
+      "id": 17,
+      "type": "SaveVideo",
+      "pos": [2870, 160],
+      "size": [420, 380],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [{"name": "video", "type": "VIDEO", "link": 27}],
+      "widgets_values": ["video/MiniMax_H3_Stitched", "auto", "auto"]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 5, 0, "MODEL"],
+    [2, 2, 0, 5, 1, "CLIP"],
+    [3, 5, 0, 8, 0, "MODEL"],
+    [4, 5, 0, 9, 0, "MODEL"],
+    [5, 5, 1, 7, 0, "CLIP"],
+    [6, 5, 2, 9, 1, "INT"],
+    [7, 3, 0, 7, 1, "VAE"],
+    [8, 6, 0, 7, 4, "STRING"],
+    [9, 6, 1, 7, 5, "INT"],
+    [10, 7, 0, 8, 1, "CONDITIONING"],
+    [11, 7, 1, 12, 4, "LATENT"],
+    [12, 8, 0, 12, 1, "GUIDER"],
+    [13, 3, 0, 13, 1, "VAE"],
+    [14, 4, 0, 14, 1, "VAE"],
+    [15, 9, 0, 12, 3, "SIGMAS"],
+    [16, 10, 0, 12, 2, "SAMPLER"],
+    [17, 15, 0, 7, 2, "IMAGE"],
+    [18, 15, 0, 6, 1, "IMAGE"],
+    [19, 15, 3, 6, 3, "H3_EXT_CTX"],
+    [20, 11, 0, 12, 0, "NOISE"],
+    [21, 12, 0, 13, 0, "LATENT"],
+    [22, 12, 0, 14, 0, "LATENT"],
+    [23, 13, 0, 15, 0, "IMAGE"],
+    [24, 14, 0, 15, 1, "AUDIO"],
+    [25, 15, 1, 16, 0, "IMAGE"],
+    [26, 15, 2, 16, 1, "AUDIO"],
+    [27, 16, 0, 17, 0, "VIDEO"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

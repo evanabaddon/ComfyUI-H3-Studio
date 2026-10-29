@@ -1,0 +1,5 @@
+numpy
+Pillow
+# Optional speed boosters for H3 33B Transformer:
+# sageattention
+# flash-attn

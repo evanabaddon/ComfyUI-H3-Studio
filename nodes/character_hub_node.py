@@ -1,0 +1,261 @@
+import json
+from typing import Any, Dict, List, Optional, Tuple
+
+from .session_store import SessionStore, tensor_to_base64_jpeg
+
+
+DEFAULT_CHARACTERS_JSON = json.dumps(
+    [
+        {
+            "slot": 1,
+            "enabled": True,
+            "name": "Char1",
+            "visual_traits": "young woman with expressive eyes and consistent outfit from reference photo",
+            "retention": "fully_preserved",
+            "speaker_id": "S1",
+            "voice_desc": "clear youthful female voice, natural conversational pace",
+            "use_audio_ref": True,
+        },
+        {
+            "slot": 2,
+            "enabled": False,
+            "name": "Char2",
+            "visual_traits": "young man with short dark hair and casual jacket from reference photo",
+            "retention": "fully_preserved",
+            "speaker_id": "S2",
+            "voice_desc": "calm warm male voice, steady cadence",
+            "use_audio_ref": False,
+        },
+    ]
+)
+
+
+class H3CharacterReferenceHub:
+    """
+    Multi-Character & Asset Reference Manager for MiniMax-H3 (Ref2VA & Keyframe Hybrid).
+    Supports Master On/Off and individual per-character On/Off toggles without unplugging wires.
+    Automatically re-indexes <Subject N>, <Picture N>, and <Audio N> tags so active assets always
+    match the exact order connected to MiniMaxH3ReferenceToVideo.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls) -> Dict[str, Any]:
+        return {
+            "required": {
+                "use_character_refs": ("BOOLEAN", {"default": True}),
+                "include_first_frame_as_picture_1": ("BOOLEAN", {"default": True}),
+                "characters_config_json": ("STRING", {"default": DEFAULT_CHARACTERS_JSON, "multiline": False}),
+            },
+            "optional": {
+                "first_frame_from_extender": ("IMAGE",),
+                "char_1_image": ("IMAGE",),
+                "char_2_image": ("IMAGE",),
+                "char_3_image": ("IMAGE",),
+                "char_4_image": ("IMAGE",),
+                "scene_bg_image": ("IMAGE",),
+                "char_1_audio": ("AUDIO",),
+                "char_2_audio": ("AUDIO",),
+                "char_3_audio": ("AUDIO",),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
+        }
+
+    RETURN_TYPES = (
+        "H3_REF_BUNDLE",
+        "IMAGE",
+        "IMAGE",
+        "IMAGE",
+        "IMAGE",
+        "IMAGE",
+        "AUDIO",
+        "AUDIO",
+        "AUDIO",
+        "BOOLEAN",
+    )
+    RETURN_NAMES = (
+        "h3_ref_bundle",
+        "ref_image_0",
+        "ref_image_1",
+        "ref_image_2",
+        "ref_image_3",
+        "ref_image_4",
+        "ref_audio_0",
+        "ref_audio_1",
+        "ref_audio_2",
+        "is_ref2va_active",
+    )
+    FUNCTION = "build_reference_bundle"
+    CATEGORY = "MiniMax-H3 Studio/Characters & References"
+
+    def build_reference_bundle(
+        self,
+        use_character_refs: bool = True,
+        include_first_frame_as_picture_1: bool = True,
+        characters_config_json: str = DEFAULT_CHARACTERS_JSON,
+        first_frame_from_extender: Optional[Any] = None,
+        char_1_image: Optional[Any] = None,
+        char_2_image: Optional[Any] = None,
+        char_3_image: Optional[Any] = None,
+        char_4_image: Optional[Any] = None,
+        scene_bg_image: Optional[Any] = None,
+        char_1_audio: Optional[Dict[str, Any]] = None,
+        char_2_audio: Optional[Dict[str, Any]] = None,
+        char_3_audio: Optional[Dict[str, Any]] = None,
+        unique_id: str = "0",
+    ) -> Dict[str, Any]:
+        try:
+            char_configs = json.loads(characters_config_json) if characters_config_json.strip() else []
+        except Exception:
+            char_configs = []
+
+        slot_images = {
+            1: char_1_image,
+            2: char_2_image,
+            3: char_3_image,
+            4: char_4_image,
+        }
+        slot_audios = {
+            1: char_1_audio,
+            2: char_2_audio,
+            3: char_3_audio,
+        }
+
+        ordered_images: List[Any] = []
+        ordered_audios: List[Dict[str, Any]] = []
+        base64_thumbnails: List[str] = []
+        active_characters_meta: List[Dict[str, Any]] = []
+        ui_preview_cards: List[Dict[str, Any]] = []
+
+        has_ff_anchor = False
+        if use_character_refs and include_first_frame_as_picture_1 and first_frame_from_extender is not None:
+            ordered_images.append(first_frame_from_extender)
+            b64_ff = tensor_to_base64_jpeg(first_frame_from_extender, index=0, max_side=512)
+            if b64_ff:
+                base64_thumbnails.append(b64_ff)
+            has_ff_anchor = True
+
+        # Ensure defaults for up to 4 slots if config is shorter
+        config_by_slot: Dict[int, Dict[str, Any]] = {}
+        for idx, cfg in enumerate(char_configs):
+            if isinstance(cfg, dict):
+                s_num = int(cfg.get("slot", idx + 1))
+                config_by_slot[s_num] = cfg
+
+        for s_num in range(1, 5):
+            if s_num not in config_by_slot:
+                config_by_slot[s_num] = {
+                    "slot": s_num,
+                    "enabled": slot_images.get(s_num) is not None,
+                    "name": f"Character {s_num}",
+                    "visual_traits": f"character in reference image {s_num}",
+                    "retention": "fully_preserved",
+                    "speaker_id": f"S{s_num}",
+                    "voice_desc": "natural clear voice",
+                    "use_audio_ref": slot_audios.get(s_num) is not None,
+                }
+
+        subject_counter = 0
+        speaker_counter = 0
+
+        if use_character_refs:
+            for s_num in range(1, 5):
+                cfg = config_by_slot[s_num]
+                img_tensor = slot_images.get(s_num)
+                aud_dict = slot_audios.get(s_num)
+                is_enabled = bool(cfg.get("enabled", True))
+
+                thumb_b64 = tensor_to_base64_jpeg(img_tensor, index=0, max_side=384) if img_tensor is not None else None
+
+                if is_enabled and (img_tensor is not None or cfg.get("visual_traits", "").strip()):
+                    subject_counter += 1
+                    speaker_counter += 1
+                    subj_tag = f"<Subject {subject_counter}>"
+
+                    if img_tensor is not None:
+                        ordered_images.append(img_tensor)
+                        pic_idx = len(ordered_images)
+                        pic_tag = f"<Picture {pic_idx}>"
+                        if thumb_b64:
+                            base64_thumbnails.append(thumb_b64)
+                    else:
+                        pic_tag = f"<Picture {subject_counter}>"
+
+                    audio_tag = ""
+                    if bool(cfg.get("use_audio_ref", True)) and aud_dict is not None:
+                        ordered_audios.append(aud_dict)
+                        audio_tag = f"<Audio {len(ordered_audios)}>"
+
+                    spk_id = cfg.get("speaker_id", "").strip() or f"S{speaker_counter}"
+                    entry_meta = {
+                        "slot": s_num,
+                        "subject_tag": subj_tag,
+                        "picture_tag": pic_tag,
+                        "audio_tag": audio_tag,
+                        "name": cfg.get("name", f"Char{s_num}").strip(),
+                        "visual_traits": cfg.get("visual_traits", "").strip(),
+                        "retention": cfg.get("retention", "fully_preserved"),
+                        "speaker_id": spk_id.lstrip("(").rstrip(")"),
+                        "voice_desc": cfg.get("voice_desc", "").strip(),
+                        "thumb_b64": thumb_b64,
+                    }
+                    active_characters_meta.append(entry_meta)
+                    ui_preview_cards.append({**entry_meta, "enabled": True})
+                else:
+                    ui_preview_cards.append({
+                        "slot": s_num,
+                        "enabled": False,
+                        "name": cfg.get("name", f"Char{s_num}"),
+                        "thumb_b64": thumb_b64,
+                    })
+
+        scene_entry = None
+        if use_character_refs and scene_bg_image is not None and len(ordered_images) < 5:
+            subject_counter += 1
+            ordered_images.append(scene_bg_image)
+            pic_idx = len(ordered_images)
+            b64_scene = tensor_to_base64_jpeg(scene_bg_image, index=0, max_side=512)
+            if b64_scene:
+                base64_thumbnails.append(b64_scene)
+            scene_entry = {
+                "subject_tag": f"<Subject {subject_counter}>",
+                "picture_tag": f"<Picture {pic_idx}>",
+                "description": "the environment, lighting, and architectural background in the scene reference image",
+                "retention": "fully_preserved",
+            }
+
+        is_ref2va_active = bool(use_character_refs and (len(active_characters_meta) > 0 or scene_entry is not None))
+
+        ref_bundle = {
+            "enabled": is_ref2va_active,
+            "has_first_frame_anchor": has_ff_anchor,
+            "characters": active_characters_meta,
+            "scene_entry": scene_entry,
+            "base64_thumbnails": base64_thumbnails,
+            "active_image_count": len(ordered_images),
+            "active_audio_count": len(ordered_audios),
+        }
+
+        # Cache previews in SessionStore so frontend live prompt generator can also inspect them
+        SessionStore.get().character_previews[str(unique_id)] = ref_bundle
+
+        # Pad outputs to fixed 5 image slots and 3 audio slots for MiniMaxH3ReferenceToVideo
+        img_outs = [ordered_images[i] if i < len(ordered_images) else None for i in range(5)]
+        aud_outs = [ordered_audios[i] if i < len(ordered_audios) else None for i in range(3)]
+
+        return {
+            "ui": {"h3_character_cards": ui_preview_cards},
+            "result": (
+                ref_bundle,
+                img_outs[0],
+                img_outs[1],
+                img_outs[2],
+                img_outs[3],
+                img_outs[4],
+                aud_outs[0],
+                aud_outs[1],
+                aud_outs[2],
+                is_ref2va_active,
+            ),
+        }
