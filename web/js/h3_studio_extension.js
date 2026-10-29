@@ -1,7 +1,9 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-// Inject H3 Studio CSS stylesheet into ComfyUI document head
+// ============================================================================
+// Inject Precision Broadcast NLE Stylesheet
+// ============================================================================
 (function injectH3Styles() {
   const id = "comfyui-h3-studio-styles";
   if (document.getElementById(id)) return;
@@ -26,15 +28,657 @@ function hideBackingWidget(node, name) {
   return w;
 }
 
-function formatTimecode(frameIdx, fps = 24) {
-  const sec = Math.max(0, frameIdx) / Math.max(1, fps);
-  const mins = Math.floor(sec / 60);
-  const rem = (sec % 60).toFixed(2).padStart(5, "0");
-  return `${String(mins).padStart(2, "0")}:${rem}s`;
+function formatSMPTETimecode(frameIdx, fps = 24) {
+  const f = Math.max(0, Math.floor(frameIdx));
+  const fpsInt = Math.max(1, Math.round(fps));
+  const totalSec = Math.floor(f / fpsInt);
+  const remFrames = f % fpsInt;
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `00:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}:${String(remFrames).padStart(2, "0")}`;
+}
+
+function findGraphNodeByType(typeName) {
+  if (!app.graph || !app.graph._nodes) return null;
+  return app.graph._nodes.find((n) => n.type === typeName) || null;
+}
+
+async function loadBundledWorkflow(templateName) {
+  try {
+    const resp = await api.fetchApi(`/h3_studio/workflows/${encodeURIComponent(templateName)}`);
+    if (!resp.ok) {
+      alert(`Failed to load workflow template: ${templateName}`);
+      return;
+    }
+    const wfJson = await resp.json();
+    await app.loadGraphData(wfJson, true, true, templateName);
+  } catch (err) {
+    console.error("[H3 Studio] Failed loading workflow:", err);
+  }
 }
 
 // ============================================================================
-// 1. H3InteractiveVideoExtender Interactive DOM Widget
+// Global NLE Studio Workspace Modal & Topbar Launcher
+// ============================================================================
+let nleStudioInstance = null;
+
+function createNLEStudioWorkspace() {
+  if (nleStudioInstance) return nleStudioInstance;
+
+  // 1. Floating Topbar Button
+  const launcher = document.createElement("button");
+  launcher.type = "button";
+  launcher.className = "h3-floating-launcher";
+  launcher.title = "Open H3 Studio NLE Video Extender & Multi-Modal Deck (Alt+H)";
+  launcher.innerHTML = `
+    <span class="h3-floating-launcher-dot"></span>
+    <span>H3 STUDIO NLE</span>
+    <span class="h3-floating-launcher-shortcut">Alt+H</span>
+  `;
+  document.body.appendChild(launcher);
+
+  // 2. Full NLE Studio Modal Backdrop
+  const backdrop = document.createElement("div");
+  backdrop.className = "h3-nle-backdrop";
+  backdrop.innerHTML = `
+    <div class="h3-nle-shell" role="dialog" aria-label="H3 Studio NLE Video Extender">
+      <!-- Top Header Bar -->
+      <header class="h3-nle-topbar">
+        <div class="h3-nle-brand">
+          <span class="h3-nle-brand-mark">H3 NLE</span>
+          <span class="h3-nle-brand-title">MINIMAX-H3 MULTI-MODAL VIDEO EXTENDER &amp; SCRIPT DECK</span>
+          <span class="h3-badge" data-nle="sync-badge">Canvas Linked</span>
+        </div>
+        <div class="h3-nle-topbar-actions">
+          <button type="button" class="h3-btn" data-nle="load-i2v">Load I2VA Workflow</button>
+          <button type="button" class="h3-btn" data-nle="load-ref2v">Load Ref2VA Multi-Char Workflow</button>
+          <button type="button" class="h3-btn h3-btn-primary" data-nle="queue-now">Queue Generation in ComfyUI</button>
+          <button type="button" class="h3-btn h3-btn-danger" data-nle="close-modal">Close [Esc]</button>
+        </div>
+      </header>
+
+      <!-- 3-Column NLE Workbench -->
+      <div class="h3-nle-workbench">
+        <!-- LEFT PANE: Character Casting & Unlimited LoRA Rack -->
+        <section class="h3-nle-pane">
+          <div class="h3-nle-pane-header">
+            <span class="h3-nle-pane-title">1. Character Casting &amp; LoRA Rack</span>
+            <label class="h3-label" style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+              <input type="checkbox" class="h3-toggle" data-nle="master-char-toggle" checked />
+              <span>Ref2VA Mode</span>
+            </label>
+          </div>
+          <div class="h3-nle-pane-body">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span class="h3-label">CHARACTER REFERENCE SLOTS (&lt;Subject N&gt;)</span>
+              <span class="h3-badge h3-badge-green" data-nle="char-active-count">1 Active</span>
+            </div>
+            <div class="h3-list-container" data-nle="char-cards" style="max-height:290px;"></div>
+
+            <div style="border-top:1px solid var(--h3-border-hairline); padding-top:10px; display:flex; justify-content:space-between; align-items:center;">
+              <span class="h3-label">UNLIMITED DYNAMIC LoRA STACK</span>
+              <button type="button" class="h3-btn h3-btn-primary" data-nle="add-lora">+ Add LoRA</button>
+            </div>
+            <div class="h3-item-row">
+              <span class="h3-label">Fast Attention:</span>
+              <select class="h3-select" data-nle="attn-select" style="flex:1;">
+                <option value="auto (SageAttn -> FlashAttn2 -> SDPA)">auto (SageAttn -&gt; FlashAttn2 -&gt; SDPA)</option>
+                <option value="sage_attention">sage_attention</option>
+                <option value="flash_attention_2">flash_attention_2</option>
+                <option value="xformers">xformers</option>
+                <option value="pytorch_sdpa">pytorch_sdpa</option>
+                <option value="comfy_default (no_override)">comfy_default (no_override)</option>
+              </select>
+            </div>
+            <div class="h3-list-container" data-nle="lora-cards" style="max-height:220px;"></div>
+          </div>
+        </section>
+
+        <!-- CENTER PANE: Cinema Program Monitor & Multi-Track Timeline -->
+        <section class="h3-nle-pane">
+          <div class="h3-nle-pane-header">
+            <span class="h3-nle-pane-title">2. Program Monitor &amp; Seamless Seam Editor</span>
+            <div style="display:flex; gap:6px;">
+              <span class="h3-badge" data-nle="seg-pill">0 Segments</span>
+              <span class="h3-badge h3-badge-amber" data-nle="total-dur-pill">0f (0.00s)</span>
+            </div>
+          </div>
+          <div class="h3-nle-pane-body">
+            <figure class="h3-monitor-stage" style="margin:0;">
+              <div class="h3-viewport-empty" data-nle="monitor-empty">
+                No video segments in timeline yet.<br/>
+                Run a generation or load a workflow to scrub frames, trim end-of-clip degradation, and lock your First-Frame Reference (&lt;Picture 1&gt;).
+              </div>
+              <img data-nle="monitor-img" style="display:none;" alt="Program Monitor Frame" />
+              <div class="h3-monitor-hud-top">
+                <span class="h3-badge" data-nle="hud-mode">24.00 FPS | STEREO 32kHz</span>
+                <span class="h3-badge h3-badge-green" data-nle="hud-ref-lock">First-Frame Anchor Ready</span>
+              </div>
+              <div class="h3-monitor-hud-bottom">
+                <span class="h3-smpte-readout" data-nle="smpte-tc">00:00:00:00</span>
+                <span class="h3-smpte-readout" data-nle="frame-counter">FRM 0000 / 0000</span>
+              </div>
+            </figure>
+
+            <!-- Transport Deck -->
+            <div class="h3-transport-deck">
+              <div class="h3-scrubber-track-row">
+                <span class="h3-label" style="font-family:var(--h3-font-mono);">IN</span>
+                <input type="range" class="h3-timeline-ruler-slider" data-nle="scrubber" min="0" max="0" value="0" />
+                <span class="h3-label" style="font-family:var(--h3-font-mono);">OUT</span>
+              </div>
+              <div class="h3-transport-controls">
+                <div style="display:flex; gap:4px;">
+                  <button type="button" class="h3-btn" data-nle="jump-start" title="Jump to Start">|&lt;</button>
+                  <button type="button" class="h3-btn" data-nle="step-prev" title="Step Back 1 Frame">-1f</button>
+                  <button type="button" class="h3-btn h3-btn-accent" data-nle="play-toggle" style="min-width:64px;">Play</button>
+                  <button type="button" class="h3-btn" data-nle="step-next" title="Step Forward 1 Frame">+1f</button>
+                  <button type="button" class="h3-btn" data-nle="jump-end" title="Jump to Last Frame">&gt;|</button>
+                </div>
+                <div style="display:flex; gap:5px;">
+                  <button type="button" class="h3-btn h3-btn-primary" data-nle="lock-extend">
+                    Lock Playhead as First-Frame Ref &amp; Trim Out
+                  </button>
+                  <button type="button" class="h3-btn" data-nle="undo-seg" title="Drop Last Segment (Re-roll)">
+                    Undo Last Clip
+                  </button>
+                  <button type="button" class="h3-btn h3-btn-danger" data-nle="clear-timeline" title="Reset All Segments">
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Multi-Track NLE Timeline (V1 Video + A1 Stereo Audio) -->
+            <div class="h3-multitrack-bay">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="h3-label">MULTI-SEGMENT TIMELINE (CLICK ANY SEGMENT TO INSPECT SEAM)</span>
+                <span class="h3-label" style="font-family:var(--h3-font-mono);">Auto-Skip Seam Frame 0: ON | Audio Crossfade: 40ms</span>
+              </div>
+              <div class="h3-track-lane">
+                <div class="h3-track-header v1">
+                  <span>V1</span>
+                  <span style="font-size:8px; color:var(--h3-amber);">VIDEO</span>
+                </div>
+                <div class="h3-track-clips" data-nle="v1-track">
+                  <span class="h3-label" style="padding:6px;">No video clips loaded</span>
+                </div>
+              </div>
+              <div class="h3-track-lane">
+                <div class="h3-track-header a1">
+                  <span>A1</span>
+                  <span style="font-size:8px; color:var(--h3-teal);">32kHz</span>
+                </div>
+                <div class="h3-track-clips" data-nle="a1-track">
+                  <span class="h3-label" style="padding:6px;">No stereo audio clips loaded</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- RIGHT PANE: AI Director (ollama.smixapp.com) & <d> Dialogue Scriptwriter -->
+        <section class="h3-nle-pane">
+          <div class="h3-nle-pane-header">
+            <span class="h3-nle-pane-title">3. AI Prompt Director &amp; &lt;d&gt; Script</span>
+            <span class="h3-badge h3-badge-amber" data-nle="frame-calc-badge">124f (5.17s)</span>
+          </div>
+          <div class="h3-nle-pane-body">
+            <div class="h3-item-row">
+              <span class="h3-label" style="width:68px;">Ollama URL:</span>
+              <input type="text" class="h3-input" data-nle="ollama-url" value="https://ollama.smixapp.com" style="flex:1;" />
+              <button type="button" class="h3-btn" data-nle="refresh-models">Sync</button>
+            </div>
+            <div class="h3-item-row">
+              <span class="h3-label" style="width:68px;">AI Model:</span>
+              <select class="h3-select" data-nle="ollama-model" style="flex:1;">
+                <option value="minimax-m3:cloud">minimax-m3:cloud [Vision]</option>
+                <option value="qwen3.6:27b">qwen3.6:27b [Vision]</option>
+                <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Vision]</option>
+                <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
+                <option value="glm-5.2:cloud">glm-5.2:cloud</option>
+              </select>
+            </div>
+            <div class="h3-item-row">
+              <span class="h3-label">Mode:</span>
+              <select class="h3-select" data-nle="h3-mode" style="flex:1;">
+                <option value="Auto (Ref2VA if Characters ON, I2VA if First-Frame, else T2VA)">Auto (Ref2VA / I2VA / T2VA)</option>
+                <option value="I2VA (First-Frame / Video Extend)">I2VA (First-Frame Extend)</option>
+                <option value="Ref2VA (Full Multi-Character Reference)">Ref2VA (Full Multi-Character)</option>
+                <option value="T2VA (Text to Video+Audio)">T2VA (Text to Video+Audio)</option>
+                <option value="FL2VA (First & Last Frame)">FL2VA (First &amp; Last Frame)</option>
+                <option value="L2VA (Last Frame Landing)">L2VA (Last Frame Landing)</option>
+              </select>
+              <span class="h3-label">Dur (s):</span>
+              <input type="number" class="h3-input" data-nle="duration-sec" min="2" max="15" step="0.5" value="5.0" style="width:54px;" />
+            </div>
+
+            <div>
+              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                <span class="h3-label">SCENE ACTION &amp; CAMERA DIRECTION (INDONESIAN / ENGLISH)</span>
+              </div>
+              <textarea class="h3-textarea" data-nle="user-idea" placeholder="Tulis adegan lanjutan di sini (misal: Char1 menoleh ke arah pintu kafe saat Char2 masuk membawa payung basah)..."></textarea>
+            </div>
+
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span class="h3-label">SYNCHRONIZED DIALOGUE LINES (&lt;d&gt;[Language] ...&lt;/d&gt;)</span>
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="add-dialogue">+ Add &lt;d&gt; Line</button>
+              </div>
+              <div class="h3-list-container" data-nle="dialogue-list" style="max-height:155px;"></div>
+            </div>
+
+            <button type="button" class="h3-btn h3-btn-accent" data-nle="generate-prompt" style="padding:8px;">
+              Compile Compliant MiniMax-H3 Prompt via Ollama
+            </button>
+
+            <div style="flex:1; display:flex; flex-direction:column; min-height:110px;">
+              <span class="h3-label" style="margin-bottom:4px;">COMPILED H3 PROMPT OUTPUT (EDITABLE)</span>
+              <textarea class="h3-textarea" data-nle="compiled-prompt" style="flex:1; min-height:110px;" placeholder="Hasil prompt H3 (subject_definitions / integrated_multimodal_description, overall_soundscape, non_diegetic_music) akan tampil di sini..."></textarea>
+            </div>
+
+            <div class="h3-status-bar">
+              <span data-nle="status-msg">Ready — Connected to Canvas Nodes</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+
+  // State & DOM Refs inside NLE Modal
+  const elCharCards = backdrop.querySelector('[data-nle="char-cards"]');
+  const elCharCount = backdrop.querySelector('[data-nle="char-active-count"]');
+  const elMasterCharToggle = backdrop.querySelector('[data-nle="master-char-toggle"]');
+  const elLoraCards = backdrop.querySelector('[data-nle="lora-cards"]');
+  const elAttnSelect = backdrop.querySelector('[data-nle="attn-select"]');
+
+  const elMonitorImg = backdrop.querySelector('[data-nle="monitor-img"]');
+  const elMonitorEmpty = backdrop.querySelector('[data-nle="monitor-empty"]');
+  const elSmpteTc = backdrop.querySelector('[data-nle="smpte-tc"]');
+  const elFrameCounter = backdrop.querySelector('[data-nle="frame-counter"]');
+  const elScrubber = backdrop.querySelector('[data-nle="scrubber"]');
+  const elV1Track = backdrop.querySelector('[data-nle="v1-track"]');
+  const elA1Track = backdrop.querySelector('[data-nle="a1-track"]');
+  const elSegPill = backdrop.querySelector('[data-nle="seg-pill"]');
+  const elTotalDurPill = backdrop.querySelector('[data-nle="total-dur-pill"]');
+  const btnPlay = backdrop.querySelector('[data-nle="play-toggle"]');
+
+  const elOllamaUrl = backdrop.querySelector('[data-nle="ollama-url"]');
+  const elOllamaModel = backdrop.querySelector('[data-nle="ollama-model"]');
+  const elH3Mode = backdrop.querySelector('[data-nle="h3-mode"]');
+  const elDurationSec = backdrop.querySelector('[data-nle="duration-sec"]');
+  const elFrameCalcBadge = backdrop.querySelector('[data-nle="frame-calc-badge"]');
+  const elUserIdea = backdrop.querySelector('[data-nle="user-idea"]');
+  const elDialogueList = backdrop.querySelector('[data-nle="dialogue-list"]');
+  const elCompiledPrompt = backdrop.querySelector('[data-nle="compiled-prompt"]');
+  const elStatusMsg = backdrop.querySelector('[data-nle="status-msg"]');
+
+  let nleState = {
+    fps: 24,
+    totalFrames: 0,
+    currentFrame: 0,
+    segments: [],
+    playing: false,
+    playTimer: null,
+    availableLoras: ["None"],
+  };
+
+  function pullFromCanvasNodes() {
+    // 1. Sync from H3CharacterReferenceHub
+    const charNode = findGraphNodeByType("H3CharacterReferenceHub");
+    if (charNode) {
+      const wUse = findWidget(charNode, "use_character_refs");
+      if (wUse) elMasterCharToggle.checked = Boolean(wUse.value);
+      if (charNode._h3RenderNLEChars) charNode._h3RenderNLEChars(elCharCards, elCharCount);
+    }
+
+    // 2. Sync from H3ModelSpeedAndLoraHub
+    const loraNode = findGraphNodeByType("H3ModelSpeedAndLoraHub");
+    if (loraNode) {
+      const wAttn = findWidget(loraNode, "attention_backend");
+      if (wAttn) elAttnSelect.value = wAttn.value;
+      if (loraNode._h3RenderNLELoras) loraNode._h3RenderNLELoras(elLoraCards);
+    }
+
+    // 3. Sync from H3AIPromptComposer
+    const promptNode = findGraphNodeByType("H3AIPromptComposer");
+    if (promptNode) {
+      const wIdea = findWidget(promptNode, "user_idea");
+      const wMode = findWidget(promptNode, "mode");
+      const wDur = findWidget(promptNode, "duration_seconds");
+      const wUrl = findWidget(promptNode, "ollama_url");
+      const wMod = findWidget(promptNode, "ollama_model");
+      const wGen = findWidget(promptNode, "generated_h3_prompt");
+      if (wIdea) elUserIdea.value = wIdea.value || "";
+      if (wMode) elH3Mode.value = wMode.value;
+      if (wDur) elDurationSec.value = wDur.value;
+      if (wUrl) elOllamaUrl.value = wUrl.value;
+      if (wMod && wMod.value) elOllamaModel.value = wMod.value;
+      if (wGen) elCompiledPrompt.value = wGen.value || "";
+      if (promptNode._h3RenderNLEDialogues) promptNode._h3RenderNLEDialogues(elDialogueList);
+    }
+
+    updateCalcBadge();
+    refreshExtenderTimelineFromServer();
+  }
+
+  function pushToCanvasPromptNode() {
+    const promptNode = findGraphNodeByType("H3AIPromptComposer");
+    if (!promptNode) return;
+    const wIdea = findWidget(promptNode, "user_idea");
+    const wMode = findWidget(promptNode, "mode");
+    const wDur = findWidget(promptNode, "duration_seconds");
+    const wUrl = findWidget(promptNode, "ollama_url");
+    const wMod = findWidget(promptNode, "ollama_model");
+    const wGen = findWidget(promptNode, "generated_h3_prompt");
+    if (wIdea) wIdea.value = elUserIdea.value;
+    if (wMode) wMode.value = elH3Mode.value;
+    if (wDur) wDur.value = parseFloat(elDurationSec.value) || 5.0;
+    if (wUrl) wUrl.value = elOllamaUrl.value;
+    if (wMod) wMod.value = elOllamaModel.value;
+    if (wGen) wGen.value = elCompiledPrompt.value;
+  }
+
+  function updateCalcBadge() {
+    const sec = parseFloat(elDurationSec.value) || 5.0;
+    const raw = Math.max(5, Math.round(sec * 24));
+    const len = raw + ((5 - (raw % 17)) % 17);
+    const eff = (len / 24).toFixed(2);
+    elFrameCalcBadge.textContent = `${len}f (${eff}s @ 17k+5)`;
+  }
+
+  async function refreshExtenderTimelineFromServer() {
+    const extNode = findGraphNodeByType("H3InteractiveVideoExtender");
+    const nodeId = extNode ? String(extNode.id) : "latest";
+    try {
+      const resp = await api.fetchApi(`/h3_studio/extender/state/${encodeURIComponent(nodeId)}`);
+      if (resp.ok) {
+        const summary = await resp.json();
+        renderNLETimeline(summary, nodeId);
+      }
+    } catch (e) {}
+  }
+
+  function loadNLEFrame(frameIdx, nodeIdOverride) {
+    if (nleState.totalFrames <= 0) return;
+    const extNode = findGraphNodeByType("H3InteractiveVideoExtender");
+    const nodeId = nodeIdOverride || (extNode ? String(extNode.id) : "latest");
+    const clamped = Math.max(0, Math.min(frameIdx, nleState.totalFrames - 1));
+    nleState.currentFrame = clamped;
+    elScrubber.value = String(clamped);
+    elSmpteTc.textContent = formatSMPTETimecode(clamped, nleState.fps);
+    elFrameCounter.textContent = `FRM ${String(clamped).padStart(4, "0")} / ${String(nleState.totalFrames - 1).padStart(4, "0")}`;
+
+    if (extNode) {
+      const wSel = findWidget(extNode, "selected_global_frame");
+      if (wSel) wSel.value = clamped;
+    }
+
+    elMonitorImg.src = `/h3_studio/extender/frame/${encodeURIComponent(nodeId)}/${clamped}?t=${Date.now()}`;
+    elMonitorImg.style.display = "block";
+    elMonitorEmpty.style.display = "none";
+  }
+
+  function renderNLETimeline(summary, nodeId) {
+    if (!summary) return;
+    nleState.fps = summary.fps || 24;
+    nleState.totalFrames = summary.total_active_frames || 0;
+    nleState.segments = summary.segments || [];
+
+    elSegPill.textContent = `${nleState.segments.length} Segments`;
+    elTotalDurPill.textContent = `${nleState.totalFrames}f (${(summary.total_duration_sec || 0).toFixed(2)}s)`;
+    elScrubber.max = String(Math.max(0, nleState.totalFrames - 1));
+
+    if (nleState.totalFrames > 0) {
+      const target =
+        typeof summary.playhead_global_frame === "number"
+          ? summary.playhead_global_frame
+          : nleState.totalFrames - 1;
+      loadNLEFrame(target, nodeId);
+    } else {
+      elMonitorImg.style.display = "none";
+      elMonitorEmpty.style.display = "block";
+      elSmpteTc.textContent = "00:00:00:00";
+      elFrameCounter.textContent = "FRM 0000 / 0000";
+    }
+
+    elV1Track.innerHTML = "";
+    elA1Track.innerHTML = "";
+
+    if (nleState.segments.length === 0) {
+      elV1Track.innerHTML = `<span class="h3-label" style="padding:6px;">No video clips in timeline</span>`;
+      elA1Track.innerHTML = `<span class="h3-label" style="padding:6px;">No stereo audio clips in timeline</span>`;
+      return;
+    }
+
+    let running = 0;
+    nleState.segments.forEach((seg, idx) => {
+      const segEndGlobal = running + seg.active_frames - 1;
+      running += seg.active_frames;
+
+      const vBlock = document.createElement("div");
+      vBlock.className = "h3-nle-clip-block" + (idx === summary.locked_ref_segment_idx ? " active" : "");
+      vBlock.style.flex = `${Math.max(1, seg.active_frames)} 1 0%`;
+      vBlock.innerHTML = `
+        <div style="display:flex; justify-content:space-between;">
+          <b>SEG ${String(idx + 1).padStart(2, "0")}</b>
+          <span>${seg.active_frames}f</span>
+        </div>
+        <div style="color:var(--h3-text-secondary); font-size:9px;">
+          In:${seg.trim_start} Out:${seg.trim_end} (${seg.duration_sec}s)
+        </div>
+      `;
+      vBlock.addEventListener("click", () => loadNLEFrame(segEndGlobal, nodeId));
+      elV1Track.appendChild(vBlock);
+
+      const aBlock = document.createElement("div");
+      aBlock.className = "h3-nle-audio-block";
+      aBlock.style.flex = `${Math.max(1, seg.active_frames)} 1 0%`;
+      aBlock.innerHTML = `
+        <span>A${idx + 1} Stereo 32kHz</span>
+        <span>${seg.duration_sec}s</span>
+      `;
+      aBlock.addEventListener("click", () => loadNLEFrame(segEndGlobal, nodeId));
+      elA1Track.appendChild(aBlock);
+    });
+  }
+
+  async function sendExtenderAction(payload) {
+    const extNode = findGraphNodeByType("H3InteractiveVideoExtender");
+    const nodeId = extNode ? String(extNode.id) : "latest";
+    try {
+      const resp = await api.fetchApi("/h3_studio/extender/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node_id: nodeId, ...payload }),
+      });
+      if (resp.ok) {
+        const summary = await resp.json();
+        renderNLETimeline(summary, nodeId);
+        if (extNode && extNode._h3RenderSummary) {
+          extNode._h3RenderSummary(summary);
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Event Listeners inside NLE Modal
+  launcher.addEventListener("click", () => {
+    backdrop.classList.add("open");
+    pullFromCanvasNodes();
+  });
+
+  backdrop.querySelector('[data-nle="close-modal"]').addEventListener("click", () => {
+    backdrop.classList.remove("open");
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey && e.key.toLowerCase() === "h") {
+      e.preventDefault();
+      if (backdrop.classList.contains("open")) {
+        backdrop.classList.remove("open");
+      } else {
+        backdrop.classList.add("open");
+        pullFromCanvasNodes();
+      }
+    } else if (e.key === "Escape" && backdrop.classList.contains("open")) {
+      backdrop.classList.remove("open");
+    }
+  });
+
+  backdrop.querySelector('[data-nle="load-i2v"]').addEventListener("click", async () => {
+    await loadBundledWorkflow("H3_I2VA_Interactive_Extender.json");
+    setTimeout(pullFromCanvasNodes, 250);
+  });
+
+  backdrop.querySelector('[data-nle="load-ref2v"]').addEventListener("click", async () => {
+    await loadBundledWorkflow("H3_Ref2VA_MultiCharacter_Studio.json");
+    setTimeout(pullFromCanvasNodes, 250);
+  });
+
+  backdrop.querySelector('[data-nle="queue-now"]').addEventListener("click", () => {
+    pushToCanvasPromptNode();
+    app.queuePrompt(0, 1);
+    elStatusMsg.textContent = "Queued generation in ComfyUI — segments will auto-append on completion.";
+  });
+
+  elMasterCharToggle.addEventListener("change", (e) => {
+    const charNode = findGraphNodeByType("H3CharacterReferenceHub");
+    if (charNode) {
+      const wUse = findWidget(charNode, "use_character_refs");
+      if (wUse) wUse.value = e.target.checked;
+    }
+  });
+
+  elAttnSelect.addEventListener("change", (e) => {
+    const loraNode = findGraphNodeByType("H3ModelSpeedAndLoraHub");
+    if (loraNode) {
+      const wAttn = findWidget(loraNode, "attention_backend");
+      if (wAttn) wAttn.value = e.target.value;
+    }
+  });
+
+  backdrop.querySelector('[data-nle="add-lora"]').addEventListener("click", () => {
+    const loraNode = findGraphNodeByType("H3ModelSpeedAndLoraHub");
+    if (loraNode && loraNode._h3AddLoraItem) {
+      loraNode._h3AddLoraItem();
+      loraNode._h3RenderNLELoras(elLoraCards);
+    }
+  });
+
+  elScrubber.addEventListener("input", (e) => {
+    loadNLEFrame(parseInt(e.target.value, 10) || 0);
+  });
+
+  backdrop.querySelector('[data-nle="jump-start"]').addEventListener("click", () => loadNLEFrame(0));
+  backdrop.querySelector('[data-nle="step-prev"]').addEventListener("click", () => loadNLEFrame(nleState.currentFrame - 1));
+  backdrop.querySelector('[data-nle="step-next"]').addEventListener("click", () => loadNLEFrame(nleState.currentFrame + 1));
+  backdrop.querySelector('[data-nle="jump-end"]').addEventListener("click", () => loadNLEFrame(Math.max(0, nleState.totalFrames - 1)));
+
+  btnPlay.addEventListener("click", () => {
+    if (nleState.playing) {
+      clearInterval(nleState.playTimer);
+      nleState.playing = false;
+      btnPlay.textContent = "Play";
+      return;
+    }
+    if (nleState.totalFrames <= 1) return;
+    nleState.playing = true;
+    btnPlay.textContent = "Pause";
+    nleState.playTimer = setInterval(() => {
+      loadNLEFrame((nleState.currentFrame + 1) % nleState.totalFrames);
+    }, Math.round(1000 / Math.max(1, nleState.fps)));
+  });
+
+  backdrop.querySelector('[data-nle="lock-extend"]').addEventListener("click", async () => {
+    await sendExtenderAction({
+      action: "lock_playhead",
+      global_frame: nleState.currentFrame,
+      trim_at_playhead: true,
+    });
+    elStatusMsg.textContent = `Locked Frame ${nleState.currentFrame} as First-Frame Reference (<Picture 1>) & trimmed tail.`;
+  });
+
+  backdrop.querySelector('[data-nle="undo-seg"]').addEventListener("click", async () => {
+    await sendExtenderAction({ action: "drop_last" });
+    elStatusMsg.textContent = "Removed last segment from timeline.";
+  });
+
+  backdrop.querySelector('[data-nle="clear-timeline"]').addEventListener("click", async () => {
+    await sendExtenderAction({ action: "clear" });
+    elStatusMsg.textContent = "Cleared timeline.";
+  });
+
+  elDurationSec.addEventListener("input", () => {
+    updateCalcBadge();
+    pushToCanvasPromptNode();
+  });
+  elUserIdea.addEventListener("input", pushToCanvasPromptNode);
+  elH3Mode.addEventListener("change", pushToCanvasPromptNode);
+  elOllamaUrl.addEventListener("input", pushToCanvasPromptNode);
+  elOllamaModel.addEventListener("change", pushToCanvasPromptNode);
+  elCompiledPrompt.addEventListener("input", pushToCanvasPromptNode);
+
+  backdrop.querySelector('[data-nle="add-dialogue"]').addEventListener("click", () => {
+    const promptNode = findGraphNodeByType("H3AIPromptComposer");
+    if (promptNode && promptNode._h3AddDialogueLine) {
+      promptNode._h3AddDialogueLine();
+      promptNode._h3RenderNLEDialogues(elDialogueList);
+    }
+  });
+
+  backdrop.querySelector('[data-nle="refresh-models"]').addEventListener("click", async () => {
+    const baseUrl = elOllamaUrl.value || "https://ollama.smixapp.com";
+    elStatusMsg.textContent = `Fetching models from ${baseUrl}...`;
+    try {
+      const resp = await api.fetchApi(`/h3_studio/ollama/models?ollama_url=${encodeURIComponent(baseUrl)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        const models = data.models || [];
+        if (models.length > 0) {
+          elOllamaModel.innerHTML = models
+            .map((m) => `<option value="${m.name}">${m.name}${m.has_vision ? " [Vision]" : ""}</option>`)
+            .join("");
+          elStatusMsg.textContent = `Loaded ${models.length} models from ${baseUrl}`;
+        }
+      }
+    } catch (e) {
+      elStatusMsg.textContent = `Model sync error: ${e.message}`;
+    }
+  });
+
+  backdrop.querySelector('[data-nle="generate-prompt"]').addEventListener("click", async () => {
+    pushToCanvasPromptNode();
+    const promptNode = findGraphNodeByType("H3AIPromptComposer");
+    if (promptNode && promptNode._h3TriggerOllamaGenerate) {
+      elStatusMsg.textContent = "Generating H3 prompt via Ollama...";
+      await promptNode._h3TriggerOllamaGenerate((res) => {
+        if (res && res.prompt) {
+          elCompiledPrompt.value = res.prompt;
+          elStatusMsg.textContent = `${res.status} | Mode: ${res.resolved_mode} | ${res.frame_length}f`;
+        }
+      });
+    }
+  });
+
+  nleStudioInstance = {
+    open: () => {
+      backdrop.classList.add("open");
+      pullFromCanvasNodes();
+    },
+    refreshSummary: (summary, nodeId) => {
+      if (backdrop.classList.contains("open")) {
+        renderNLETimeline(summary, nodeId);
+      }
+    },
+  };
+  return nleStudioInstance;
+}
+
+// ============================================================================
+// 1. H3InteractiveVideoExtender Canvas Node UI
 // ============================================================================
 function setupExtenderNodeUI(node) {
   const wSelectedFrame = findWidget(node, "selected_global_frame");
@@ -46,53 +690,54 @@ function setupExtenderNodeUI(node) {
   panel.innerHTML = `
     <div class="h3-studio-header">
       <div class="h3-studio-title">
-        <span>H3 TIMELINE & EXTENDER</span>
+        <span>H3 TIMELINE &amp; EXTENDER</span>
         <span class="h3-badge" data-role="seg-badge">0 Segs</span>
       </div>
-      <span class="h3-badge h3-badge-amber" data-role="dur-badge">0f (0.00s)</span>
+      <div style="display:flex; gap:5px; align-items:center;">
+        <span class="h3-badge h3-badge-amber" data-role="dur-badge">0f (0.00s)</span>
+        <button type="button" class="h3-btn h3-btn-primary" data-action="open-nle" title="Open Full-Screen NLE Studio (Alt+H)">
+          Open Studio NLE
+        </button>
+      </div>
     </div>
 
     <div class="h3-viewport" data-role="viewport">
       <div class="h3-viewport-empty" data-role="empty-msg">
-        Belum ada segmen video.<br/>Jalankan Queue atau klik <b>1-Click Build H3 Workflow</b> di bawah.
+        Timeline kosong.<br/>Klik <b>Open Studio NLE</b> di kanan atas atau jalankan Queue untuk mulai extend video.
       </div>
       <img data-role="frame-img" style="display:none;" alt="H3 Frame Preview" />
       <div class="h3-viewport-overlay">
-        <span class="h3-timecode" data-role="tc-left">Frame: 0 / 0</span>
-        <span class="h3-timecode" data-role="tc-right">00:00.00s</span>
+        <span class="h3-timecode" data-role="tc-left">FRM 0000 / 0000</span>
+        <span class="h3-timecode" data-role="tc-right">00:00:00:00</span>
       </div>
     </div>
 
     <div class="h3-scrubber-row">
-      <button type="button" class="h3-btn" data-action="step-prev" title="Mundur 1 Frame (-1f)">-1f</button>
-      <button type="button" class="h3-btn" data-action="play-toggle" title="Play / Pause Preview">Play</button>
-      <button type="button" class="h3-btn" data-action="step-next" title="Maju 1 Frame (+1f)">+1f</button>
+      <button type="button" class="h3-btn" data-action="step-prev">-1f</button>
+      <button type="button" class="h3-btn" data-action="play-toggle">Play</button>
+      <button type="button" class="h3-btn" data-action="step-next">+1f</button>
       <input type="range" class="h3-scrubber-slider" data-role="scrubber" min="0" max="0" value="0" />
-      <button type="button" class="h3-btn" data-action="jump-end" title="Lompat ke Frame Terakhir">End</button>
+      <button type="button" class="h3-btn" data-action="jump-end">End</button>
     </div>
 
     <div class="h3-segments-strip" data-role="segments-strip">
-      <span class="h3-label" style="padding-left:6px;">Timeline kosong (Segmen klip akan muncul di sini)</span>
+      <span class="h3-label" style="padding-left:6px;">No segments recorded yet</span>
     </div>
 
     <div class="h3-btn-row">
       <button type="button" class="h3-btn h3-btn-primary" data-action="lock-extend" style="flex:1;">
-        Lock Playhead as First-Frame Ref & Trim Out
+        Lock Playhead as First-Frame Ref &amp; Trim Out
       </button>
-      <button type="button" class="h3-btn" data-action="drop-last" title="Hapus segmen terakhir (Re-roll)">
-        Undo Seg
-      </button>
-      <button type="button" class="h3-btn h3-btn-danger" data-action="clear-all" title="Reset seluruh timeline">
-        Reset
-      </button>
+      <button type="button" class="h3-btn" data-action="drop-last">Undo Seg</button>
+      <button type="button" class="h3-btn h3-btn-danger" data-action="clear-all">Reset</button>
     </div>
 
-    <div class="h3-btn-row" style="border-top:1px solid #232931; padding-top:6px;">
+    <div class="h3-btn-row" style="border-top:1px solid var(--h3-border-hairline); padding-top:6px;">
       <button type="button" class="h3-btn h3-btn-accent" data-action="build-i2v-wf" style="flex:1;">
-        Auto-Wire H3 I2VA Workflow
+        Load I2VA Workflow
       </button>
       <button type="button" class="h3-btn h3-btn-accent" data-action="build-ref2v-wf" style="flex:1;">
-        Auto-Wire H3 Ref2VA Studio
+        Load Ref2VA Studio
       </button>
     </div>
   `;
@@ -121,12 +766,11 @@ function setupExtenderNodeUI(node) {
     const clamped = Math.max(0, Math.min(frameIdx, state.totalFrames - 1));
     state.currentFrame = clamped;
     elScrubber.value = String(clamped);
-    elTcLeft.textContent = `Frame: ${clamped} / ${state.totalFrames - 1}`;
-    elTcRight.textContent = formatTimecode(clamped, state.fps);
+    elTcLeft.textContent = `FRM ${String(clamped).padStart(4, "0")} / ${String(state.totalFrames - 1).padStart(4, "0")}`;
+    elTcRight.textContent = formatSMPTETimecode(clamped, state.fps);
     if (wSelectedFrame) wSelectedFrame.value = clamped;
 
-    const url = `/h3_studio/extender/frame/${encodeURIComponent(node.id)}/${clamped}?t=${Date.now()}`;
-    elFrameImg.src = url;
+    elFrameImg.src = `/h3_studio/extender/frame/${encodeURIComponent(node.id)}/${clamped}?t=${Date.now()}`;
     elFrameImg.style.display = "block";
     elEmptyMsg.style.display = "none";
   }
@@ -150,34 +794,32 @@ function setupExtenderNodeUI(node) {
     } else {
       elFrameImg.style.display = "none";
       elEmptyMsg.style.display = "block";
-      elTcLeft.textContent = "Frame: 0 / 0";
-      elTcRight.textContent = "00:00.00s";
+      elTcLeft.textContent = "FRM 0000 / 0000";
+      elTcRight.textContent = "00:00:00:00";
     }
 
     elSegmentsStrip.innerHTML = "";
     if (state.segments.length === 0) {
-      elSegmentsStrip.innerHTML = `<span class="h3-label" style="padding-left:6px;">Timeline kosong</span>`;
+      elSegmentsStrip.innerHTML = `<span class="h3-label" style="padding-left:6px;">No segments recorded yet</span>`;
     } else {
       let runningStart = 0;
       state.segments.forEach((seg, idx) => {
         const pill = document.createElement("div");
-        pill.className =
-          "h3-segment-pill" + (idx === summary.locked_ref_segment_idx ? " active" : "");
-        const segStartGlobal = runningStart;
+        pill.className = "h3-segment-pill" + (idx === summary.locked_ref_segment_idx ? " active" : "");
         const segEndGlobal = runningStart + seg.active_frames - 1;
         runningStart += seg.active_frames;
 
         pill.innerHTML = `
-          <span><b>Seg ${idx + 1}</b>: ${seg.active_frames}f (${seg.duration_sec}s) ${seg.has_audio ? "🔊" : ""}</span>
-          <span style="font-size:9px; color:#94a3b8;">In:${seg.trim_start} Out:${seg.trim_end}</span>
+          <span><b>SEG ${idx + 1}</b>: ${seg.active_frames}f (${seg.duration_sec}s)</span>
+          <span style="font-size:9px; color:var(--h3-text-secondary);">In:${seg.trim_start} Out:${seg.trim_end}</span>
         `;
-        pill.addEventListener("click", () => {
-          loadFramePreview(segEndGlobal);
-        });
+        pill.addEventListener("click", () => loadFramePreview(segEndGlobal));
         elSegmentsStrip.appendChild(pill);
       });
     }
   }
+
+  node._h3RenderSummary = renderSummary;
 
   async function postExtenderAction(actionPayload) {
     try {
@@ -195,21 +837,14 @@ function setupExtenderNodeUI(node) {
     }
   }
 
-  elScrubber.addEventListener("input", (e) => {
-    loadFramePreview(parseInt(e.target.value, 10) || 0);
+  panel.querySelector('[data-action="open-nle"]').addEventListener("click", () => {
+    createNLEStudioWorkspace().open();
   });
 
-  panel.querySelector('[data-action="step-prev"]').addEventListener("click", () => {
-    loadFramePreview(state.currentFrame - 1);
-  });
-
-  panel.querySelector('[data-action="step-next"]').addEventListener("click", () => {
-    loadFramePreview(state.currentFrame + 1);
-  });
-
-  panel.querySelector('[data-action="jump-end"]').addEventListener("click", () => {
-    loadFramePreview(Math.max(0, state.totalFrames - 1));
-  });
+  elScrubber.addEventListener("input", (e) => loadFramePreview(parseInt(e.target.value, 10) || 0));
+  panel.querySelector('[data-action="step-prev"]').addEventListener("click", () => loadFramePreview(state.currentFrame - 1));
+  panel.querySelector('[data-action="step-next"]').addEventListener("click", () => loadFramePreview(state.currentFrame + 1));
+  panel.querySelector('[data-action="jump-end"]').addEventListener("click", () => loadFramePreview(Math.max(0, state.totalFrames - 1)));
 
   btnPlay.addEventListener("click", () => {
     if (state.playing) {
@@ -222,8 +857,7 @@ function setupExtenderNodeUI(node) {
     state.playing = true;
     btnPlay.textContent = "Pause";
     state.timer = setInterval(() => {
-      const next = (state.currentFrame + 1) % state.totalFrames;
-      loadFramePreview(next);
+      loadFramePreview((state.currentFrame + 1) % state.totalFrames);
     }, Math.round(1000 / Math.max(1, state.fps)));
   });
 
@@ -264,13 +898,15 @@ function setupExtenderNodeUI(node) {
   node.onExecuted = function (output) {
     if (origOnExecuted) origOnExecuted.apply(this, arguments);
     if (output && output.h3_extender_summary && output.h3_extender_summary[0]) {
-      renderSummary(output.h3_extender_summary[0]);
+      const summary = output.h3_extender_summary[0];
+      renderSummary(summary);
+      createNLEStudioWorkspace().refreshSummary(summary, String(node.id));
     }
   };
 }
 
 // ============================================================================
-// 2. H3ModelSpeedAndLoraHub Interactive Unlimited LoRA Stack UI
+// 2. H3ModelSpeedAndLoraHub Canvas Node UI
 // ============================================================================
 function setupModelLoraNodeUI(node) {
   const wLoraJson = hideBackingWidget(node, "lora_stack_json");
@@ -284,7 +920,7 @@ function setupModelLoraNodeUI(node) {
         <span class="h3-badge h3-badge-green" data-role="lora-count">1 Active</span>
       </div>
       <div style="display:flex; gap:4px;">
-        <button type="button" class="h3-btn" data-action="refresh-loras" title="Refresh daftar LoRA">↻</button>
+        <button type="button" class="h3-btn" data-action="refresh-loras" title="Refresh LoRA files">Sync</button>
         <button type="button" class="h3-btn h3-btn-primary" data-action="add-lora">+ Add LoRA</button>
       </div>
     </div>
@@ -318,17 +954,15 @@ function setupModelLoraNodeUI(node) {
   } catch (e) {}
 
   function syncLoraWidget() {
-    if (wLoraJson) {
-      wLoraJson.value = JSON.stringify(loraItems);
-    }
+    if (wLoraJson) wLoraJson.value = JSON.stringify(loraItems);
     const activeCount = loraItems.filter((x) => x.enabled && x.name && x.name !== "None").length;
     elLoraCount.textContent = `${activeCount} Active`;
   }
 
-  function renderLoraList() {
-    elLoraList.innerHTML = "";
+  function renderLoraListInto(targetContainer) {
+    targetContainer.innerHTML = "";
     if (loraItems.length === 0) {
-      elLoraList.innerHTML = `<div class="h3-label" style="padding:8px; text-align:center;">Belum ada LoRA. Klik <b>+ Add LoRA</b> untuk menambah.</div>`;
+      targetContainer.innerHTML = `<div class="h3-label" style="padding:8px; text-align:center;">No LoRAs added. Click <b>+ Add LoRA</b>.</div>`;
       syncLoraWidget();
       return;
     }
@@ -338,20 +972,17 @@ function setupModelLoraNodeUI(node) {
       card.className = "h3-item-card" + (item.enabled ? "" : " disabled");
 
       const optionsHtml = availableLoras
-        .map(
-          (l) =>
-            `<option value="${l}" ${l === item.name ? "selected" : ""}>${l}</option>`
-        )
+        .map((l) => `<option value="${l}" ${l === item.name ? "selected" : ""}>${l}</option>`)
         .join("");
 
       card.innerHTML = `
         <div class="h3-item-row">
-          <input type="checkbox" class="h3-toggle" data-field="enabled" ${item.enabled ? "checked" : ""} title="On/Off LoRA ini" />
-          <select class="h3-select" data-field="name" style="flex:1; min-width:140px;">
+          <input type="checkbox" class="h3-toggle" data-field="enabled" ${item.enabled ? "checked" : ""} />
+          <select class="h3-select" data-field="name" style="flex:1; min-width:130px;">
             ${optionsHtml}
             ${!availableLoras.includes(item.name) && item.name ? `<option value="${item.name}" selected>${item.name}</option>` : ""}
           </select>
-          <button type="button" class="h3-btn h3-btn-danger" data-field="delete" title="Hapus LoRA">✕</button>
+          <button type="button" class="h3-btn h3-btn-danger" data-field="delete">Del</button>
         </div>
         <div class="h3-item-row">
           <span class="h3-label">Model Str:</span>
@@ -363,7 +994,8 @@ function setupModelLoraNodeUI(node) {
 
       card.querySelector('[data-field="enabled"]').addEventListener("change", (e) => {
         item.enabled = e.target.checked;
-        renderLoraList();
+        renderLoraListInto(elLoraList);
+        if (targetContainer !== elLoraList) renderLoraListInto(targetContainer);
       });
       card.querySelector('[data-field="name"]').addEventListener("change", (e) => {
         item.name = e.target.value;
@@ -379,13 +1011,25 @@ function setupModelLoraNodeUI(node) {
       });
       card.querySelector('[data-field="delete"]').addEventListener("click", () => {
         loraItems.splice(idx, 1);
-        renderLoraList();
+        renderLoraListInto(elLoraList);
+        if (targetContainer !== elLoraList) renderLoraListInto(targetContainer);
       });
 
-      elLoraList.appendChild(card);
+      targetContainer.appendChild(card);
     });
     syncLoraWidget();
   }
+
+  node._h3RenderNLELoras = renderLoraListInto;
+  node._h3AddLoraItem = () => {
+    loraItems.push({
+      enabled: true,
+      name: availableLoras[1] || "None",
+      model_strength: 1.0,
+      clip_strength: 1.0,
+    });
+    renderLoraListInto(elLoraList);
+  };
 
   async function fetchLorasFromServer() {
     try {
@@ -394,25 +1038,16 @@ function setupModelLoraNodeUI(node) {
         const data = await resp.json();
         if (Array.isArray(data.loras) && data.loras.length > 0) {
           availableLoras = data.loras;
-          renderLoraList();
+          renderLoraListInto(elLoraList);
         }
       }
     } catch (e) {}
   }
 
   panel.querySelector('[data-action="add-lora"]').addEventListener("click", () => {
-    loraItems.push({
-      enabled: true,
-      name: availableLoras[1] || "None",
-      model_strength: 1.0,
-      clip_strength: 1.0,
-    });
-    renderLoraList();
+    node._h3AddLoraItem();
   });
-
-  panel.querySelector('[data-action="refresh-loras"]').addEventListener("click", () => {
-    fetchLorasFromServer();
-  });
+  panel.querySelector('[data-action="refresh-loras"]').addEventListener("click", fetchLorasFromServer);
 
   node.addDOMWidget("h3_lora_dom", "custom_dom", panel, {
     serialize: false,
@@ -420,12 +1055,12 @@ function setupModelLoraNodeUI(node) {
   });
   node.setSize([410, 420]);
 
-  renderLoraList();
+  renderLoraListInto(elLoraList);
   fetchLorasFromServer();
 }
 
 // ============================================================================
-// 3. H3CharacterReferenceHub Interactive Multi-Character Toggle Cards UI
+// 3. H3CharacterReferenceHub Canvas Node UI
 // ============================================================================
 function setupCharacterHubNodeUI(node) {
   const wCharsJson = hideBackingWidget(node, "characters_config_json");
@@ -436,9 +1071,9 @@ function setupCharacterHubNodeUI(node) {
     <div class="h3-studio-header">
       <div class="h3-studio-title">
         <span>MULTI-CHARACTER REFERENCE CARDS</span>
-        <span class="h3-badge" data-role="active-chars-badge">1 ON</span>
+        <span class="h3-badge h3-badge-green" data-role="active-chars-badge">1 ON</span>
       </div>
-      <span class="h3-label">Auto &lt;Subject N&gt; &amp; (Sx)</span>
+      <button type="button" class="h3-btn" data-action="open-nle">Studio View</button>
     </div>
     <div class="h3-list-container" data-role="char-list" style="max-height:280px;"></div>
   `;
@@ -492,22 +1127,19 @@ function setupCharacterHubNodeUI(node) {
   try {
     if (wCharsJson && wCharsJson.value) {
       const parsed = JSON.parse(wCharsJson.value);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        charConfigs = parsed;
-      }
+      if (Array.isArray(parsed) && parsed.length > 0) charConfigs = parsed;
     }
   } catch (e) {}
 
-  function syncCharWidget() {
-    if (wCharsJson) {
-      wCharsJson.value = JSON.stringify(charConfigs);
-    }
+  function syncCharWidget(badgeOverride) {
+    if (wCharsJson) wCharsJson.value = JSON.stringify(charConfigs);
     const active = charConfigs.filter((c) => c.enabled).length;
-    elActiveBadge.textContent = `${active} Character(s) ON`;
+    elActiveBadge.textContent = `${active} ON`;
+    if (badgeOverride) badgeOverride.textContent = `${active} Active`;
   }
 
-  function renderCharCards() {
-    elCharList.innerHTML = "";
+  function renderCharCardsInto(targetContainer, badgeOverride) {
+    targetContainer.innerHTML = "";
     let activeSubjectIdx = 0;
 
     charConfigs.forEach((cfg, idx) => {
@@ -525,14 +1157,14 @@ function setupCharacterHubNodeUI(node) {
           </div>
           <div style="display:flex; align-items:center; gap:4px;">
             <span class="h3-label">Alias:</span>
-            <input type="text" class="h3-input" data-field="name" value="${cfg.name || ""}" placeholder="Mis: Budi" style="width:80px;" />
+            <input type="text" class="h3-input" data-field="name" value="${cfg.name || ""}" style="width:76px;" />
             <span class="h3-label">Spk:</span>
-            <input type="text" class="h3-input" data-field="speaker_id" value="${cfg.speaker_id || `S${idx + 1}`}" style="width:36px;" />
+            <input type="text" class="h3-input" data-field="speaker_id" value="${cfg.speaker_id || `S${idx + 1}`}" style="width:34px;" />
           </div>
         </div>
         <div class="h3-item-row">
-          <input type="text" class="h3-input" data-field="visual_traits" value="${cfg.visual_traits || ""}" placeholder="Ciri wajah & pakaian (<Subject N>)..." style="flex:1;" />
-          <select class="h3-select" data-field="retention" title="Retention Mode">
+          <input type="text" class="h3-input" data-field="visual_traits" value="${cfg.visual_traits || ""}" placeholder="Visual appearance traits (<Subject N>)..." style="flex:1;" />
+          <select class="h3-select" data-field="retention">
             <option value="fully_preserved" ${cfg.retention === "fully_preserved" ? "selected" : ""}>fully_preserved</option>
             <option value="partially_preserved" ${cfg.retention === "partially_preserved" ? "selected" : ""}>partially_preserved</option>
             <option value="attribute_transfer" ${cfg.retention === "attribute_transfer" ? "selected" : ""}>attribute_transfer</option>
@@ -540,48 +1172,55 @@ function setupCharacterHubNodeUI(node) {
           </select>
         </div>
         <div class="h3-item-row">
-          <input type="text" class="h3-input" data-field="voice_desc" value="${cfg.voice_desc || ""}" placeholder="Suara/Timbre (mis: clear young female voice)..." style="flex:1;" />
+          <input type="text" class="h3-input" data-field="voice_desc" value="${cfg.voice_desc || ""}" placeholder="Voice timbre description..." style="flex:1;" />
           <label class="h3-label" style="display:flex; align-items:center; gap:3px; cursor:pointer;">
             <input type="checkbox" data-field="use_audio_ref" ${cfg.use_audio_ref ? "checked" : ""} />
-            Audio Ref
+            Audio
           </label>
         </div>
       `;
 
       card.querySelector('[data-field="enabled"]').addEventListener("change", (e) => {
         cfg.enabled = e.target.checked;
-        renderCharCards();
+        renderCharCardsInto(elCharList);
+        if (targetContainer !== elCharList) renderCharCardsInto(targetContainer, badgeOverride);
       });
       card.querySelector('[data-field="name"]').addEventListener("input", (e) => {
         cfg.name = e.target.value;
-        syncCharWidget();
+        syncCharWidget(badgeOverride);
       });
       card.querySelector('[data-field="speaker_id"]').addEventListener("input", (e) => {
         cfg.speaker_id = e.target.value;
-        syncCharWidget();
+        syncCharWidget(badgeOverride);
       });
       card.querySelector('[data-field="visual_traits"]').addEventListener("input", (e) => {
         cfg.visual_traits = e.target.value;
-        syncCharWidget();
+        syncCharWidget(badgeOverride);
       });
       card.querySelector('[data-field="retention"]').addEventListener("change", (e) => {
         cfg.retention = e.target.value;
-        syncCharWidget();
+        syncCharWidget(badgeOverride);
       });
       card.querySelector('[data-field="voice_desc"]').addEventListener("input", (e) => {
         cfg.voice_desc = e.target.value;
-        syncCharWidget();
+        syncCharWidget(badgeOverride);
       });
       card.querySelector('[data-field="use_audio_ref"]').addEventListener("change", (e) => {
         cfg.use_audio_ref = e.target.checked;
-        syncCharWidget();
+        syncCharWidget(badgeOverride);
       });
 
-      elCharList.appendChild(card);
+      targetContainer.appendChild(card);
     });
 
-    syncCharWidget();
+    syncCharWidget(badgeOverride);
   }
+
+  node._h3RenderNLEChars = renderCharCardsInto;
+
+  panel.querySelector('[data-action="open-nle"]').addEventListener("click", () => {
+    createNLEStudioWorkspace().open();
+  });
 
   node.addDOMWidget("h3_char_hub_dom", "custom_dom", panel, {
     serialize: false,
@@ -589,11 +1228,11 @@ function setupCharacterHubNodeUI(node) {
   });
   node.setSize([440, 490]);
 
-  renderCharCards();
+  renderCharCardsInto(elCharList);
 }
 
 // ============================================================================
-// 4. H3AIPromptComposer Interactive Dialogue (<d>) Builder & Ollama Live UI
+// 4. H3AIPromptComposer Canvas Node UI
 // ============================================================================
 function setupPromptComposerNodeUI(node) {
   const wDialogueJson = hideBackingWidget(node, "dialogue_lines_json");
@@ -611,24 +1250,23 @@ function setupPromptComposerNodeUI(node) {
   panel.innerHTML = `
     <div class="h3-studio-header">
       <div class="h3-studio-title">
-        <span>DIALOGUE (&lt;d&gt;) BUILDER &amp; OLLAMA AI</span>
+        <span>DIALOGUE (&lt;d&gt;) &amp; OLLAMA AI</span>
         <span class="h3-badge h3-badge-amber" data-role="calc-badge">124f (5.17s)</span>
       </div>
       <div style="display:flex; gap:4px;">
-        <button type="button" class="h3-btn" data-action="fetch-models" title="Ambil daftar model dari ollama.smixapp.com">Models ↻</button>
-        <button type="button" class="h3-btn h3-btn-primary" data-action="add-dialogue">+ Add &lt;d&gt; Line</button>
+        <button type="button" class="h3-btn" data-action="fetch-models">Models</button>
+        <button type="button" class="h3-btn h3-btn-primary" data-action="add-dialogue">+ Add &lt;d&gt;</button>
       </div>
     </div>
 
     <div class="h3-item-row">
-      <span class="h3-label">Pilih Model Server:</span>
+      <span class="h3-label">Ollama Model:</span>
       <select class="h3-select" data-role="model-select" style="flex:1;">
-        <option value="minimax-m3:cloud">minimax-m3:cloud (Vision + Thinking)</option>
-        <option value="qwen3.6:27b">qwen3.6:27b (Vision)</option>
-        <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest (Vision)</option>
+        <option value="minimax-m3:cloud">minimax-m3:cloud [Vision]</option>
+        <option value="qwen3.6:27b">qwen3.6:27b [Vision]</option>
+        <option value="huihui_ai/Qwen3.8-abliterated:latest">huihui_ai/Qwen3.8-abliterated:latest [Vision]</option>
         <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
         <option value="glm-5.2:cloud">glm-5.2:cloud</option>
-        <option value="gemma3:latest">gemma3:latest</option>
       </select>
     </div>
 
@@ -636,12 +1274,12 @@ function setupPromptComposerNodeUI(node) {
 
     <div class="h3-btn-row">
       <button type="button" class="h3-btn h3-btn-accent" data-action="generate-now" style="flex:1; padding:7px;">
-        Generate H3 Prompt Now (via ollama.smixapp.com)
+        Compile H3 Prompt via Ollama
       </button>
     </div>
 
     <div class="h3-status-bar">
-      <span data-role="status-text">Ready — Klik tombol di atas atau langsung Queue Prompt</span>
+      <span data-role="status-text">Ready — Connected to ollama.smixapp.com</span>
     </div>
   `;
 
@@ -677,16 +1315,14 @@ function setupPromptComposerNodeUI(node) {
   }
 
   function syncDialogueWidget() {
-    if (wDialogueJson) {
-      wDialogueJson.value = JSON.stringify(dialogueLines);
-    }
+    if (wDialogueJson) wDialogueJson.value = JSON.stringify(dialogueLines);
     updateFrameCalcBadge();
   }
 
-  function renderDialogueList() {
-    elDialogueList.innerHTML = "";
+  function renderDialogueListInto(targetContainer) {
+    targetContainer.innerHTML = "";
     if (dialogueLines.length === 0) {
-      elDialogueList.innerHTML = `<div class="h3-label" style="padding:6px; text-align:center;">Tanpa dialog khusus (atau tulis dialog di cerita utama). Klik <b>+ Add &lt;d&gt; Line</b> untuk menambah dialog presisi.</div>`;
+      targetContainer.innerHTML = `<div class="h3-label" style="padding:6px; text-align:center;">No structured dialogue lines. Click <b>+ Add &lt;d&gt;</b> to add lip-synced or VO speech.</div>`;
       syncDialogueWidget();
       return;
     }
@@ -696,23 +1332,23 @@ function setupPromptComposerNodeUI(node) {
       card.className = "h3-item-card";
       card.innerHTML = `
         <div class="h3-item-row">
-          <input type="text" class="h3-input" data-field="speaker" value="${dl.speaker || `<Subject ${idx + 1}> (S${idx + 1})`}" placeholder="<Subject 1> (S1)" style="width:115px;" title="Speaker ID H3" />
-          <select class="h3-select" data-field="language" title="Bahasa asli di dalam <d>[Language] ...</d>">
+          <input type="text" class="h3-input" data-field="speaker" value="${dl.speaker || `<Subject ${idx + 1}> (S${idx + 1})`}" style="width:112px;" />
+          <select class="h3-select" data-field="language">
             ${["Indonesian", "English", "Japanese", "Chinese", "Korean", "Spanish", "French", "German", "Arabic", "Portuguese", "Russian"]
               .map((lang) => `<option value="${lang}" ${dl.language === lang ? "selected" : ""}>[${lang}]</option>`)
               .join("")}
           </select>
-          <label class="h3-label" style="display:flex; align-items:center; gap:3px; cursor:pointer;" title="Off-screen voiceover (bibir karakter tetap tertutup)">
+          <label class="h3-label" style="display:flex; align-items:center; gap:3px; cursor:pointer;">
             <input type="checkbox" data-field="voiceover" ${dl.voiceover ? "checked" : ""} />
             VO
           </label>
-          <button type="button" class="h3-btn h3-btn-danger" data-field="delete" style="margin-left:auto;">✕</button>
+          <button type="button" class="h3-btn h3-btn-danger" data-field="delete" style="margin-left:auto;">Del</button>
         </div>
         <div class="h3-item-row">
-          <input type="text" class="h3-input" data-field="text" value="${dl.text || ""}" placeholder="Kalimat dialog verbatim (mis: Ayo kita berangkat sekarang!)..." style="flex:1;" />
+          <input type="text" class="h3-input" data-field="text" value="${dl.text || ""}" placeholder="Spoken dialogue line inside <d>..." style="flex:1;" />
         </div>
         <div class="h3-item-row">
-          <input type="text" class="h3-input" data-field="delivery" value="${dl.delivery || ""}" placeholder="Nada bicara (mis: calm voice with slight excitement)..." style="flex:1;" />
+          <input type="text" class="h3-input" data-field="delivery" value="${dl.delivery || ""}" placeholder="Vocal delivery / emotion..." style="flex:1;" />
         </div>
       `;
 
@@ -738,53 +1374,17 @@ function setupPromptComposerNodeUI(node) {
       });
       card.querySelector('[data-field="delete"]').addEventListener("click", () => {
         dialogueLines.splice(idx, 1);
-        renderDialogueList();
+        renderDialogueListInto(elDialogueList);
+        if (targetContainer !== elDialogueList) renderDialogueListInto(targetContainer);
       });
 
-      elDialogueList.appendChild(card);
+      targetContainer.appendChild(card);
     });
     syncDialogueWidget();
   }
 
-  elModelSelect.addEventListener("change", (e) => {
-    if (wOllamaModel) wOllamaModel.value = e.target.value;
-  });
-
-  async function refreshOllamaModels() {
-    const baseUrl = wOllamaUrl ? wOllamaUrl.value : "https://ollama.smixapp.com";
-    elStatusText.textContent = `Mengambil daftar model dari ${baseUrl}...`;
-    try {
-      const resp = await api.fetchApi(
-        `/h3_studio/ollama/models?ollama_url=${encodeURIComponent(baseUrl)}`
-      );
-      if (resp.ok) {
-        const data = await resp.json();
-        const models = data.models || [];
-        if (models.length > 0) {
-          elModelSelect.innerHTML = models
-            .map(
-              (m) =>
-                `<option value="${m.name}">${m.name}${m.has_vision ? " [Vision]" : ""}</option>`
-            )
-            .join("");
-          if (wOllamaModel && wOllamaModel.value) {
-            elModelSelect.value = wOllamaModel.value;
-          } else if (wOllamaModel) {
-            wOllamaModel.value = models[0].name;
-          }
-          elStatusText.textContent = `Terhubung: ${models.length} model siap di ${baseUrl}`;
-        }
-      }
-    } catch (e) {
-      elStatusText.textContent = `Gagal memuat daftar model (${e.message})`;
-    }
-  }
-
-  panel.querySelector('[data-action="fetch-models"]').addEventListener("click", () => {
-    refreshOllamaModels();
-  });
-
-  panel.querySelector('[data-action="add-dialogue"]').addEventListener("click", () => {
+  node._h3RenderNLEDialogues = renderDialogueListInto;
+  node._h3AddDialogueLine = () => {
     const nextIdx = dialogueLines.length + 1;
     dialogueLines.push({
       speaker: `<Subject ${nextIdx}> (S${nextIdx})`,
@@ -793,15 +1393,44 @@ function setupPromptComposerNodeUI(node) {
       delivery: "natural conversational tone",
       voiceover: false,
     });
-    renderDialogueList();
+    renderDialogueListInto(elDialogueList);
+  };
+
+  elModelSelect.addEventListener("change", (e) => {
+    if (wOllamaModel) wOllamaModel.value = e.target.value;
   });
 
-  btnGenerate.addEventListener("click", async () => {
+  async function refreshOllamaModels() {
+    const baseUrl = wOllamaUrl ? wOllamaUrl.value : "https://ollama.smixapp.com";
+    elStatusText.textContent = `Syncing models from ${baseUrl}...`;
+    try {
+      const resp = await api.fetchApi(`/h3_studio/ollama/models?ollama_url=${encodeURIComponent(baseUrl)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        const models = data.models || [];
+        if (models.length > 0) {
+          elModelSelect.innerHTML = models
+            .map((m) => `<option value="${m.name}">${m.name}${m.has_vision ? " [Vision]" : ""}</option>`)
+            .join("");
+          if (wOllamaModel && wOllamaModel.value) {
+            elModelSelect.value = wOllamaModel.value;
+          } else if (wOllamaModel) {
+            wOllamaModel.value = models[0].name;
+          }
+          elStatusText.textContent = `Connected: ${models.length} models ready`;
+        }
+      }
+    } catch (e) {
+      elStatusText.textContent = `Model sync error: ${e.message}`;
+    }
+  }
+
+  async function triggerOllamaGenerate(onCompleteCallback) {
     updateFrameCalcBadge();
     btnGenerate.disabled = true;
     const origLabel = btnGenerate.textContent;
-    btnGenerate.textContent = "Generating H3 Prompt via Ollama...";
-    elStatusText.textContent = "Memanggil LLM di ollama.smixapp.com...";
+    btnGenerate.textContent = "Compiling H3 Prompt...";
+    elStatusText.textContent = "Calling Ollama LLM...";
 
     try {
       const payload = {
@@ -825,7 +1454,8 @@ function setupPromptComposerNodeUI(node) {
         if (wGeneratedPrompt && res.prompt) {
           wGeneratedPrompt.value = res.prompt;
         }
-        elStatusText.textContent = `${res.status} | Mode: ${res.resolved_mode} | ${res.frame_length}f (${res.effective_duration_sec}s)`;
+        elStatusText.textContent = `${res.status} | ${res.resolved_mode} | ${res.frame_length}f`;
+        if (onCompleteCallback) onCompleteCallback(res);
       } else {
         elStatusText.textContent = `HTTP Error ${resp.status}`;
       }
@@ -835,7 +1465,13 @@ function setupPromptComposerNodeUI(node) {
       btnGenerate.disabled = false;
       btnGenerate.textContent = origLabel;
     }
-  });
+  }
+
+  node._h3TriggerOllamaGenerate = triggerOllamaGenerate;
+
+  panel.querySelector('[data-action="fetch-models"]').addEventListener("click", refreshOllamaModels);
+  panel.querySelector('[data-action="add-dialogue"]').addEventListener("click", () => node._h3AddDialogueLine());
+  btnGenerate.addEventListener("click", () => triggerOllamaGenerate());
 
   node.addDOMWidget("h3_prompt_composer_dom", "custom_dom", panel, {
     serialize: false,
@@ -856,25 +1492,8 @@ function setupPromptComposerNodeUI(node) {
     }
   };
 
-  renderDialogueList();
+  renderDialogueListInto(elDialogueList);
   refreshOllamaModels();
-}
-
-// ============================================================================
-// Helper: Load Bundled H3 Complete Workflow JSON into ComfyUI Canvas
-// ============================================================================
-async function loadBundledWorkflow(templateName) {
-  try {
-    const resp = await api.fetchApi(`/h3_studio/workflows/${encodeURIComponent(templateName)}`);
-    if (!resp.ok) {
-      alert(`Gagal memuat workflow template: ${templateName}`);
-      return;
-    }
-    const wfJson = await resp.json();
-    await app.loadGraphData(wfJson, true, true, templateName);
-  } catch (err) {
-    console.error("[H3 Studio] Failed loading workflow:", err);
-  }
 }
 
 // ============================================================================
@@ -882,6 +1501,9 @@ async function loadBundledWorkflow(templateName) {
 // ============================================================================
 app.registerExtension({
   name: "ComfyUI.H3Studio.InteractiveExtension",
+  async setup() {
+    createNLEStudioWorkspace();
+  },
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (!nodeData) return;
 
