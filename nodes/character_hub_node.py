@@ -33,9 +33,12 @@ DEFAULT_CHARACTERS_JSON = json.dumps(
 class H3CharacterReferenceHub:
     """
     Multi-Character & Asset Reference Manager for MiniMax-H3 (Ref2VA & Keyframe Hybrid).
-    Supports Master On/Off and individual per-character On/Off toggles without unplugging wires.
-    Automatically re-indexes <Subject N>, <Picture N>, and <Audio N> tags so active assets always
-    match the exact order connected to MiniMaxH3ReferenceToVideo.
+    Supports an Unlimited Dynamic Character Roster (1..N characters in the story) with Master On/Off
+    and individual per-character On/Off toggles without unplugging wires.
+    Up to 6 physical reference image wires (`char_1_image` .. `char_6_image`) can be connected,
+    and characters beyond 6 (or without reference photos) still maintain persistent `<Subject N>` visual & vocal definitions!
+    Automatically packs the active characters for the current segment into the 5 `<Picture N>` and 3 `<Audio N>` slots
+    accepted by MiniMaxH3ReferenceToVideo.
     """
 
     @classmethod
@@ -52,10 +55,13 @@ class H3CharacterReferenceHub:
                 "char_2_image": ("IMAGE",),
                 "char_3_image": ("IMAGE",),
                 "char_4_image": ("IMAGE",),
+                "char_5_image": ("IMAGE",),
+                "char_6_image": ("IMAGE",),
                 "scene_bg_image": ("IMAGE",),
                 "char_1_audio": ("AUDIO",),
                 "char_2_audio": ("AUDIO",),
                 "char_3_audio": ("AUDIO",),
+                "char_4_audio": ("AUDIO",),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -104,14 +110,19 @@ class H3CharacterReferenceHub:
         char_2_image: Optional[Any] = None,
         char_3_image: Optional[Any] = None,
         char_4_image: Optional[Any] = None,
+        char_5_image: Optional[Any] = None,
+        char_6_image: Optional[Any] = None,
         scene_bg_image: Optional[Any] = None,
         char_1_audio: Optional[Dict[str, Any]] = None,
         char_2_audio: Optional[Dict[str, Any]] = None,
         char_3_audio: Optional[Dict[str, Any]] = None,
+        char_4_audio: Optional[Dict[str, Any]] = None,
         unique_id: str = "0",
     ) -> Dict[str, Any]:
         try:
             char_configs = json.loads(characters_config_json) if characters_config_json.strip() else []
+            if not isinstance(char_configs, list):
+                char_configs = []
         except Exception:
             char_configs = []
 
@@ -120,17 +131,21 @@ class H3CharacterReferenceHub:
             2: char_2_image,
             3: char_3_image,
             4: char_4_image,
+            5: char_5_image,
+            6: char_6_image,
         }
         slot_audios = {
             1: char_1_audio,
             2: char_2_audio,
             3: char_3_audio,
+            4: char_4_audio,
         }
 
         ordered_images: List[Any] = []
         ordered_audios: List[Dict[str, Any]] = []
         base64_thumbnails: List[str] = []
         active_characters_meta: List[Dict[str, Any]] = []
+        all_roster_meta: List[Dict[str, Any]] = []
         ui_preview_cards: List[Dict[str, Any]] = []
 
         # Wireless First-Frame Bridge: if no explicit override wire is connected and auto_fetch_extender_first_frame is True,
@@ -149,20 +164,27 @@ class H3CharacterReferenceHub:
                 base64_thumbnails.append(b64_ff)
             has_ff_anchor = True
 
-        # Ensure defaults for up to 4 slots if config is shorter
+        # Support unlimited characters from char_configs + any connected physical image slots
         config_by_slot: Dict[int, Dict[str, Any]] = {}
+        max_slot = 4
         for idx, cfg in enumerate(char_configs):
             if isinstance(cfg, dict):
                 s_num = int(cfg.get("slot", idx + 1))
                 config_by_slot[s_num] = cfg
+                if s_num > max_slot:
+                    max_slot = s_num
 
-        for s_num in range(1, 5):
+        for s_num, img_val in slot_images.items():
+            if img_val is not None and s_num > max_slot:
+                max_slot = s_num
+
+        for s_num in range(1, max_slot + 1):
             if s_num not in config_by_slot:
                 config_by_slot[s_num] = {
                     "slot": s_num,
                     "enabled": slot_images.get(s_num) is not None,
-                    "name": f"Character {s_num}",
-                    "visual_traits": f"character in reference image {s_num}",
+                    "name": f"Char{s_num}",
+                    "visual_traits": f"character {s_num} with consistent appearance",
                     "retention": "fully_preserved",
                     "speaker_id": f"S{s_num}",
                     "voice_desc": "natural clear voice",
@@ -172,56 +194,68 @@ class H3CharacterReferenceHub:
         subject_counter = 0
         speaker_counter = 0
 
-        if use_character_refs:
-            for s_num in range(1, 5):
-                cfg = config_by_slot[s_num]
-                img_tensor = slot_images.get(s_num)
-                aud_dict = slot_audios.get(s_num)
-                is_enabled = bool(cfg.get("enabled", True))
+        for s_num in sorted(config_by_slot.keys()):
+            cfg = config_by_slot[s_num]
+            img_tensor = slot_images.get(s_num)
+            aud_dict = slot_audios.get(s_num)
+            is_enabled = bool(cfg.get("enabled", True))
+            thumb_b64 = tensor_to_base64_jpeg(img_tensor, index=0, max_side=384) if img_tensor is not None else None
 
-                thumb_b64 = tensor_to_base64_jpeg(img_tensor, index=0, max_side=384) if img_tensor is not None else None
+            roster_item = {
+                "slot": s_num,
+                "enabled": is_enabled,
+                "name": cfg.get("name", f"Char{s_num}").strip() or f"Char{s_num}",
+                "visual_traits": cfg.get("visual_traits", "").strip(),
+                "retention": cfg.get("retention", "fully_preserved"),
+                "speaker_id": (cfg.get("speaker_id", "").strip() or f"S{s_num}").lstrip("(").rstrip(")"),
+                "voice_desc": cfg.get("voice_desc", "").strip() or "natural clear voice",
+                "has_image_wire": img_tensor is not None,
+                "has_audio_wire": aud_dict is not None,
+            }
+            all_roster_meta.append(roster_item)
 
-                if is_enabled and (img_tensor is not None or cfg.get("visual_traits", "").strip()):
-                    subject_counter += 1
-                    speaker_counter += 1
-                    subj_tag = f"<Subject {subject_counter}>"
+            if use_character_refs and is_enabled and (img_tensor is not None or cfg.get("visual_traits", "").strip()):
+                subject_counter += 1
+                speaker_counter += 1
+                subj_tag = f"<Subject {subject_counter}>"
 
-                    if img_tensor is not None:
-                        ordered_images.append(img_tensor)
-                        pic_idx = len(ordered_images)
-                        pic_tag = f"<Picture {pic_idx}>"
-                        if thumb_b64:
-                            base64_thumbnails.append(thumb_b64)
-                    else:
-                        pic_tag = f"<Picture {subject_counter}>"
-
-                    audio_tag = ""
-                    if bool(cfg.get("use_audio_ref", True)) and aud_dict is not None:
-                        ordered_audios.append(aud_dict)
-                        audio_tag = f"<Audio {len(ordered_audios)}>"
-
-                    spk_id = cfg.get("speaker_id", "").strip() or f"S{speaker_counter}"
-                    entry_meta = {
-                        "slot": s_num,
-                        "subject_tag": subj_tag,
-                        "picture_tag": pic_tag,
-                        "audio_tag": audio_tag,
-                        "name": cfg.get("name", f"Char{s_num}").strip(),
-                        "visual_traits": cfg.get("visual_traits", "").strip(),
-                        "retention": cfg.get("retention", "fully_preserved"),
-                        "speaker_id": spk_id.lstrip("(").rstrip(")"),
-                        "voice_desc": cfg.get("voice_desc", "").strip(),
-                        "thumb_b64": thumb_b64,
-                    }
-                    active_characters_meta.append(entry_meta)
-                    ui_preview_cards.append({**entry_meta, "enabled": True})
+                # Pack up to 5 reference images into MiniMaxH3ReferenceToVideo
+                if img_tensor is not None and len(ordered_images) < 5:
+                    ordered_images.append(img_tensor)
+                    pic_idx = len(ordered_images)
+                    pic_tag = f"<Picture {pic_idx}>"
+                    if thumb_b64:
+                        base64_thumbnails.append(thumb_b64)
                 else:
-                    ui_preview_cards.append({
-                        "slot": s_num,
-                        "enabled": False,
-                        "name": cfg.get("name", f"Char{s_num}"),
-                        "thumb_b64": thumb_b64,
-                    })
+                    pic_tag = f"<Picture {min(5, subject_counter)}>"
+
+                audio_tag = ""
+                if bool(cfg.get("use_audio_ref", True)) and aud_dict is not None and len(ordered_audios) < 3:
+                    ordered_audios.append(aud_dict)
+                    audio_tag = f"<Audio {len(ordered_audios)}>"
+
+                spk_id = cfg.get("speaker_id", "").strip() or f"S{speaker_counter}"
+                entry_meta = {
+                    "slot": s_num,
+                    "subject_tag": subj_tag,
+                    "picture_tag": pic_tag,
+                    "audio_tag": audio_tag,
+                    "name": cfg.get("name", f"Char{s_num}").strip(),
+                    "visual_traits": cfg.get("visual_traits", "").strip(),
+                    "retention": cfg.get("retention", "fully_preserved"),
+                    "speaker_id": spk_id.lstrip("(").rstrip(")"),
+                    "voice_desc": cfg.get("voice_desc", "").strip(),
+                    "thumb_b64": thumb_b64,
+                }
+                active_characters_meta.append(entry_meta)
+                ui_preview_cards.append({**entry_meta, "enabled": True})
+            else:
+                ui_preview_cards.append({
+                    "slot": s_num,
+                    "enabled": False,
+                    "name": cfg.get("name", f"Char{s_num}"),
+                    "thumb_b64": thumb_b64,
+                })
 
         scene_entry = None
         if use_character_refs and scene_bg_image is not None and len(ordered_images) < 5:
@@ -244,6 +278,7 @@ class H3CharacterReferenceHub:
             "enabled": is_ref2va_active,
             "has_first_frame_anchor": has_ff_anchor,
             "characters": active_characters_meta,
+            "all_roster": all_roster_meta,
             "scene_entry": scene_entry,
             "base64_thumbnails": base64_thumbnails,
             "active_image_count": len(ordered_images),

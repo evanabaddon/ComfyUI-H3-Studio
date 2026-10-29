@@ -110,8 +110,11 @@ function createNLEStudioWorkspace() {
           </div>
           <div class="h3-nle-pane-body">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span class="h3-label">CHARACTER REFERENCE SLOTS (&lt;Subject N&gt;)</span>
-              <span class="h3-badge h3-badge-green" data-nle="char-active-count">1 Active</span>
+              <span class="h3-label">CHARACTER ROSTER (&lt;Subject 1..N&gt;)</span>
+              <div style="display:flex; gap:5px; align-items:center;">
+                <span class="h3-badge h3-badge-green" data-nle="char-active-count">1 Active</span>
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="add-character" title="Add New Character to Story Roster">+ Add Char</button>
+              </div>
             </div>
             <div class="h3-list-container" data-nle="char-cards" style="max-height:290px;"></div>
 
@@ -217,10 +220,17 @@ function createNLEStudioWorkspace() {
           </div>
         </section>
 
-        <!-- RIGHT PANE: AI Director (ollama.smixapp.com) & <d> Dialogue Scriptwriter -->
+        <!-- RIGHT PANE: AI Director (Single-Shot Deck + Autonomous Multi-Segment Episode Storyboarder) -->
         <section class="h3-nle-pane">
           <div class="h3-nle-pane-header">
-            <span class="h3-nle-pane-title">3. AI Prompt Director &amp; &lt;d&gt; Script</span>
+            <div style="display:flex; gap:4px; align-items:center;">
+              <button type="button" class="h3-btn h3-btn-primary" data-nle="tab-single" style="padding:3px 8px; font-size:10px;">
+                Single Segment Deck
+              </button>
+              <button type="button" class="h3-btn" data-nle="tab-episode" style="padding:3px 8px; font-size:10px;">
+                Episode Storyboard (Auto-10m)
+              </button>
+            </div>
             <span class="h3-badge h3-badge-amber" data-nle="frame-calc-badge">124f (5.17s)</span>
           </div>
           <div class="h3-nle-pane-body">
@@ -239,47 +249,103 @@ function createNLEStudioWorkspace() {
                 <option value="glm-5.2:cloud">glm-5.2:cloud</option>
               </select>
             </div>
-            <div class="h3-item-row">
-              <span class="h3-label">Mode:</span>
-              <select class="h3-select" data-nle="h3-mode" style="flex:1;">
-                <option value="Auto (Ref2VA if Characters ON, I2VA if First-Frame, else T2VA)">Auto (Ref2VA / I2VA / T2VA)</option>
-                <option value="I2VA (First-Frame / Video Extend)">I2VA (First-Frame Extend)</option>
-                <option value="Ref2VA (Full Multi-Character Reference)">Ref2VA (Full Multi-Character)</option>
-                <option value="T2VA (Text to Video+Audio)">T2VA (Text to Video+Audio)</option>
-                <option value="FL2VA (First & Last Frame)">FL2VA (First &amp; Last Frame)</option>
-                <option value="L2VA (Last Frame Landing)">L2VA (Last Frame Landing)</option>
-              </select>
-              <span class="h3-label">Dur (s):</span>
-              <input type="number" class="h3-input" data-nle="duration-sec" min="2" max="15" step="0.5" value="5.0" style="width:54px;" />
-            </div>
 
-            <div>
-              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <span class="h3-label">SCENE ACTION &amp; CAMERA DIRECTION (INDONESIAN / ENGLISH)</span>
+            <!-- VIEW A: SINGLE SEGMENT DECK -->
+            <div data-nle="view-single" style="display:flex; flex-direction:column; gap:10px; flex:1;">
+              <div class="h3-item-row">
+                <span class="h3-label">Mode:</span>
+                <select class="h3-select" data-nle="h3-mode" style="flex:1;">
+                  <option value="Auto (Ref2VA if Characters ON, I2VA if First-Frame, else T2VA)">Auto (Ref2VA / I2VA / T2VA)</option>
+                  <option value="I2VA (First-Frame / Video Extend)">I2VA (First-Frame Extend)</option>
+                  <option value="Ref2VA (Full Multi-Character Reference)">Ref2VA (Full Multi-Character)</option>
+                  <option value="T2VA (Text to Video+Audio)">T2VA (Text to Video+Audio)</option>
+                  <option value="FL2VA (First & Last Frame)">FL2VA (First &amp; Last Frame)</option>
+                  <option value="L2VA (Last Frame Landing)">L2VA (Last Frame Landing)</option>
+                </select>
+                <span class="h3-label">Dur (s):</span>
+                <input type="number" class="h3-input" data-nle="duration-sec" min="2" max="15" step="0.5" value="5.0" style="width:54px;" />
               </div>
-              <textarea class="h3-textarea" data-nle="user-idea" placeholder="Tulis adegan lanjutan di sini (misal: Char1 menoleh ke arah pintu kafe saat Char2 masuk membawa payung basah)..."></textarea>
-            </div>
 
-            <div>
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <span class="h3-label">SYNCHRONIZED DIALOGUE LINES (&lt;d&gt;[Language] ...&lt;/d&gt;)</span>
-                <button type="button" class="h3-btn h3-btn-primary" data-nle="add-dialogue">+ Add &lt;d&gt; Line</button>
+              <div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                  <span class="h3-label">SCENE ACTION &amp; CAMERA DIRECTION (INDONESIAN / ENGLISH)</span>
+                </div>
+                <textarea class="h3-textarea" data-nle="user-idea" placeholder="Tulis adegan lanjutan di sini (misal: Char1 menoleh ke arah pintu kafe saat Char2 masuk membawa payung basah)..."></textarea>
               </div>
-              <div class="h3-list-container" data-nle="dialogue-list" style="max-height:155px;"></div>
+
+              <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                  <span class="h3-label">SYNCHRONIZED DIALOGUE LINES (&lt;d&gt;[Language] ...&lt;/d&gt;)</span>
+                  <button type="button" class="h3-btn h3-btn-primary" data-nle="add-dialogue">+ Add &lt;d&gt; Line</button>
+                </div>
+                <div class="h3-list-container" data-nle="dialogue-list" style="max-height:145px;"></div>
+              </div>
+
+              <div style="display:flex; gap:6px;">
+                <button type="button" class="h3-btn h3-btn-accent" data-nle="generate-prompt" style="flex:1; padding:8px;">
+                  Compile H3 Prompt via Ollama
+                </button>
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="auto-continue-prompt" style="flex:1; padding:8px;" title="Lock current frame, read previous segment prompt &amp; frame, and let AI write the next seamless segment!">
+                  AI Auto-Continue Next Seg
+                </button>
+              </div>
+
+              <div style="flex:1; display:flex; flex-direction:column; min-height:100px;">
+                <span class="h3-label" style="margin-bottom:4px;">COMPILED H3 PROMPT OUTPUT (EDITABLE)</span>
+                <textarea class="h3-textarea" data-nle="compiled-prompt" style="flex:1; min-height:100px;" placeholder="Hasil prompt H3 (subject_definitions / integrated_multimodal_description, overall_soundscape, non_diegetic_music) akan tampil di sini..."></textarea>
+              </div>
             </div>
 
-            <div style="display:flex; gap:6px;">
-              <button type="button" class="h3-btn h3-btn-accent" data-nle="generate-prompt" style="flex:1; padding:8px;">
-                Compile H3 Prompt via Ollama
-              </button>
-              <button type="button" class="h3-btn h3-btn-primary" data-nle="auto-continue-prompt" style="flex:1; padding:8px;" title="Lock current frame, read previous segment prompt &amp; frame, and let AI write the next seamless segment!">
-                AI Auto-Continue Next Seg
-              </button>
-            </div>
+            <!-- VIEW B: EPISODE STORYBOARD DIRECTOR (MULTI-SEGMENT AUTO-PLANNER & AUTOPILOT) -->
+            <div data-nle="view-episode" style="display:none; flex-direction:column; gap:10px; flex:1;">
+              <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                  <span class="h3-label">LONG STORY / EPISODE SYNOPSIS (MULTI-CHARACTER)</span>
+                  <span class="h3-badge" data-nle="sb-plan-summary">0 Segs Planned</span>
+                </div>
+                <textarea class="h3-textarea" data-nle="sb-synopsis" style="min-height:76px;" placeholder="Tulis alur cerita panjang di sini (bisa melibatkan Char1, Char2, Char3, Char4, dst. AI akan membagi menjadi segmen-segmen 5–15 detik lengkap dengan dialog <d> dan pergantian karakter otomatis)..."></textarea>
+              </div>
 
-            <div style="flex:1; display:flex; flex-direction:column; min-height:110px;">
-              <span class="h3-label" style="margin-bottom:4px;">COMPILED H3 PROMPT OUTPUT (EDITABLE)</span>
-              <textarea class="h3-textarea" data-nle="compiled-prompt" style="flex:1; min-height:110px;" placeholder="Hasil prompt H3 (subject_definitions / integrated_multimodal_description, overall_soundscape, non_diegetic_music) akan tampil di sini..."></textarea>
+              <div class="h3-item-row">
+                <span class="h3-label">Target Dur:</span>
+                <select class="h3-select" data-nle="sb-total-dur" style="width:92px;">
+                  <option value="30">30 Sec</option>
+                  <option value="60" selected>1 Min (60s)</option>
+                  <option value="180">3 Min (180s)</option>
+                  <option value="300">5 Min (300s)</option>
+                  <option value="600">10 Min (600s)</option>
+                </select>
+                <span class="h3-label">Pacing:</span>
+                <select class="h3-select" data-nle="sb-pacing" style="flex:1;">
+                  <option value="auto_adaptive" selected>Auto-Adaptive (5s–15s by &lt;d&gt; length)</option>
+                  <option value="fast_5s">Fast Cuts (~5.17s / 124f)</option>
+                  <option value="standard_8s">Standard (~8.0s / 192f)</option>
+                  <option value="extended_12s">Extended (~12.0s / 294f)</option>
+                  <option value="max_15s">Max H3 Clip (15.08s / 362f)</option>
+                </select>
+              </div>
+
+              <div style="display:flex; gap:6px;">
+                <button type="button" class="h3-btn h3-btn-accent" data-nle="sb-plan-btn" style="flex:1; padding:7px;">
+                  AI Generate Multi-Segment Storyboard &amp; &lt;d&gt;
+                </button>
+                <button type="button" class="h3-btn" data-nle="sb-add-seg" title="Add Blank Segment Manually">+ Seg</button>
+              </div>
+
+              <div class="h3-list-container" data-nle="sb-segment-list" style="flex:1; max-height:260px; min-height:160px;">
+                <div class="h3-label" style="padding:12px; text-align:center;">
+                  Belum ada daftar segmen.<br/>Tulis sinopsis cerita di atas lalu klik <b>AI Generate Multi-Segment Storyboard</b>.
+                </div>
+              </div>
+
+              <div style="display:flex; gap:5px; flex-wrap:wrap; border-top:1px solid var(--h3-border-hairline); padding-top:8px;">
+                <button type="button" class="h3-btn" data-nle="sb-run-next" style="flex:1;">
+                  Run Next Pending Seg
+                </button>
+                <button type="button" class="h3-btn h3-btn-primary" data-nle="sb-autopilot-btn" style="flex:1;">
+                  Auto-Produce All (Autopilot)
+                </button>
+              </div>
             </div>
 
             <div class="h3-status-bar">
@@ -618,6 +684,303 @@ function createNLEStudioWorkspace() {
     }
   });
 
+  backdrop.querySelector('[data-nle="add-character"]').addEventListener("click", () => {
+    const charNode = findGraphNodeByType("H3CharacterReferenceHub");
+    if (charNode && charNode._h3AddCharacterSlot) {
+      charNode._h3AddCharacterSlot(elCharCards, elCharCount);
+    }
+  });
+
+  // Tab Switching: Single Segment Deck vs Episode Storyboard (Auto-10m)
+  const btnTabSingle = backdrop.querySelector('[data-nle="tab-single"]');
+  const btnTabEpisode = backdrop.querySelector('[data-nle="tab-episode"]');
+  const viewSingle = backdrop.querySelector('[data-nle="view-single"]');
+  const viewEpisode = backdrop.querySelector('[data-nle="view-episode"]');
+
+  btnTabSingle.addEventListener("click", () => {
+    btnTabSingle.classList.add("h3-btn-primary");
+    btnTabEpisode.classList.remove("h3-btn-primary");
+    viewSingle.style.display = "flex";
+    viewEpisode.style.display = "none";
+  });
+
+  btnTabEpisode.addEventListener("click", () => {
+    btnTabEpisode.classList.add("h3-btn-primary");
+    btnTabSingle.classList.remove("h3-btn-primary");
+    viewSingle.style.display = "none";
+    viewEpisode.style.display = "flex";
+    renderStoryboardQueue();
+  });
+
+  // Episode Storyboard State & Autopilot Engine
+  const elSbSynopsis = backdrop.querySelector('[data-nle="sb-synopsis"]');
+  const elSbTotalDur = backdrop.querySelector('[data-nle="sb-total-dur"]');
+  const elSbPacing = backdrop.querySelector('[data-nle="sb-pacing"]');
+  const elSbPlanBtn = backdrop.querySelector('[data-nle="sb-plan-btn"]');
+  const elSbAddSegBtn = backdrop.querySelector('[data-nle="sb-add-seg"]');
+  const elSbSegList = backdrop.querySelector('[data-nle="sb-segment-list"]');
+  const elSbPlanSummary = backdrop.querySelector('[data-nle="sb-plan-summary"]');
+  const elSbRunNextBtn = backdrop.querySelector('[data-nle="sb-run-next"]');
+  const elSbAutopilotBtn = backdrop.querySelector('[data-nle="sb-autopilot-btn"]');
+
+  let storyboardState = {
+    segments: [],
+    autopilotActive: false,
+    activeRunningIdx: -1,
+  };
+
+  function getFullCharactersRoster() {
+    const charNode = findGraphNodeByType("H3CharacterReferenceHub");
+    if (charNode && charNode._h3GetCharConfigs) {
+      return charNode._h3GetCharConfigs();
+    }
+    return [
+      { slot: 1, enabled: true, name: "Char1", speaker_id: "S1", visual_traits: "lead character", voice_desc: "clear voice" },
+      { slot: 2, enabled: false, name: "Char2", speaker_id: "S2", visual_traits: "second character", voice_desc: "warm voice" },
+    ];
+  }
+
+  function renderStoryboardQueue() {
+    const segs = storyboardState.segments || [];
+    const totalSec = segs.reduce((acc, s) => acc + (parseFloat(s.duration_seconds) || 0), 0);
+    elSbPlanSummary.textContent = `${segs.length} Segs (${totalSec.toFixed(1)}s)`;
+
+    if (segs.length === 0) {
+      elSbSegList.innerHTML = `
+        <div class="h3-label" style="padding:12px; text-align:center;">
+          Belum ada daftar segmen.<br/>Tulis sinopsis cerita di atas lalu klik <b>AI Generate Multi-Segment Storyboard</b>.
+        </div>
+      `;
+      return;
+    }
+
+    elSbSegList.innerHTML = "";
+    segs.forEach((seg, idx) => {
+      const card = document.createElement("div");
+      card.className = "h3-item-card";
+      if (seg.status === "done") {
+        card.style.borderColor = "var(--h3-teal)";
+      } else if (seg.status === "running") {
+        card.style.borderColor = "var(--h3-amber)";
+      }
+
+      const statusBadgeClass =
+        seg.status === "done" ? "h3-badge-green" : seg.status === "running" ? "h3-badge-amber" : "";
+      const slotsStr = (seg.active_character_slots || [1]).join(", ");
+      const firstDlg = (seg.dialogue_lines && seg.dialogue_lines[0]) || {
+        speaker: "<Subject 1> (S1)",
+        language: "Indonesian",
+        text: "",
+        delivery: "natural conversational tone",
+        voiceover: false,
+      };
+
+      card.innerHTML = `
+        <div class="h3-item-row" style="justify-content:space-between;">
+          <div style="display:flex; gap:5px; align-items:center;">
+            <b>SEG #${idx + 1}</b>
+            <span class="h3-badge ${statusBadgeClass}">${(seg.status || "pending").toUpperCase()}</span>
+            <select class="h3-select" data-sb="transition" style="font-size:10px; padding:2px 5px;">
+              <option value="CONTINUE_FRAME" ${seg.transition_type === "CONTINUE_FRAME" ? "selected" : ""}>CONTINUE_FRAME (Extend)</option>
+              <option value="NEW_SCENE_CUT" ${seg.transition_type === "NEW_SCENE_CUT" ? "selected" : ""}>NEW_SCENE_CUT (Fresh Cut)</option>
+            </select>
+          </div>
+          <div style="display:flex; gap:4px; align-items:center;">
+            <span class="h3-label">Chars:</span>
+            <input type="text" class="h3-input" data-sb="slots" value="${slotsStr}" title="Active Character Slot Numbers (e.g. 1, 2, 3)" style="width:46px; font-size:10px;" />
+            <input type="number" class="h3-input" data-sb="dur" min="3" max="15" step="0.5" value="${seg.duration_seconds || 8.0}" style="width:48px; font-size:10px;" />
+            <button type="button" class="h3-btn" data-sb="load-one" title="Load this segment into Single Deck &amp; Queue">Run</button>
+            <button type="button" class="h3-btn h3-btn-danger" data-sb="del" style="padding:3px 6px;">X</button>
+          </div>
+        </div>
+        <div class="h3-item-row">
+          <input type="text" class="h3-input" data-sb="action" value="${(seg.visual_action || "").replace(/"/g, "&quot;")}" placeholder="Visual camera &amp; character action..." style="flex:1;" />
+        </div>
+        <div class="h3-item-row">
+          <input type="text" class="h3-input" data-sb="spk" value="${firstDlg.speaker || "<Subject 1> (S1)"}" style="width:95px; font-size:10px;" />
+          <input type="text" class="h3-input" data-sb="dlg" value="${(firstDlg.text || "").replace(/"/g, "&quot;")}" placeholder="Spoken <d> dialogue in this segment (optional)..." style="flex:1;" />
+        </div>
+      `;
+
+      card.querySelector('[data-sb="transition"]').addEventListener("change", (e) => {
+        seg.transition_type = e.target.value;
+      });
+      card.querySelector('[data-sb="slots"]').addEventListener("input", (e) => {
+        const parsedSlots = e.target.value
+          .split(",")
+          .map((x) => parseInt(x.trim(), 10))
+          .filter((n) => !isNaN(n) && n > 0);
+        seg.active_character_slots = parsedSlots.length > 0 ? parsedSlots : [1];
+      });
+      card.querySelector('[data-sb="dur"]').addEventListener("input", (e) => {
+        seg.duration_seconds = Math.max(3, Math.min(15, parseFloat(e.target.value) || 8.0));
+        const totalNow = storyboardState.segments.reduce((acc, s) => acc + (parseFloat(s.duration_seconds) || 0), 0);
+        elSbPlanSummary.textContent = `${storyboardState.segments.length} Segs (${totalNow.toFixed(1)}s)`;
+      });
+      card.querySelector('[data-sb="action"]').addEventListener("input", (e) => {
+        seg.visual_action = e.target.value;
+      });
+      const updateDlg = () => {
+        const spkVal = card.querySelector('[data-sb="spk"]').value.trim() || "<Subject 1> (S1)";
+        const dlgVal = card.querySelector('[data-sb="dlg"]').value.trim();
+        if (dlgVal) {
+          seg.dialogue_lines = [
+            {
+              speaker: spkVal,
+              language: firstDlg.language || "Indonesian",
+              text: dlgVal,
+              delivery: firstDlg.delivery || "natural expressive voice",
+              voiceover: Boolean(firstDlg.voiceover),
+            },
+          ];
+        } else {
+          seg.dialogue_lines = [];
+        }
+      };
+      card.querySelector('[data-sb="spk"]').addEventListener("input", updateDlg);
+      card.querySelector('[data-sb="dlg"]').addEventListener("input", updateDlg);
+
+      card.querySelector('[data-sb="load-one"]').addEventListener("click", () => {
+        executeStoryboardSegmentAtIndex(idx);
+      });
+      card.querySelector('[data-sb="del"]').addEventListener("click", () => {
+        storyboardState.segments.splice(idx, 1);
+        renderStoryboardQueue();
+      });
+
+      elSbSegList.appendChild(card);
+    });
+  }
+
+  async function executeStoryboardSegmentAtIndex(idx) {
+    if (idx < 0 || idx >= storyboardState.segments.length) return;
+    const seg = storyboardState.segments[idx];
+    seg.status = "running";
+    storyboardState.activeRunningIdx = idx;
+    renderStoryboardQueue();
+
+    // 1. Auto-toggle active character slots for this segment in H3CharacterReferenceHub
+    const charNode = findGraphNodeByType("H3CharacterReferenceHub");
+    if (charNode && charNode._h3SetActiveSlots) {
+      charNode._h3SetActiveSlots(seg.active_character_slots || [1], elCharCards, elCharCount);
+      const wFetchFF = findWidget(charNode, "auto_fetch_extender_first_frame");
+      if (wFetchFF) wFetchFF.value = seg.transition_type === "CONTINUE_FRAME";
+    }
+
+    // 2. If CONTINUE_FRAME and we have frames in timeline, lock the last good frame
+    if (seg.transition_type === "CONTINUE_FRAME" && nleState.totalFrames > 0) {
+      const targetLockFrame = Math.max(0, nleState.totalFrames - 1);
+      await sendExtenderAction({
+        action: "lock_playhead",
+        global_frame: targetLockFrame,
+        trim_at_playhead: false,
+      });
+    }
+
+    // 3. Populate H3AIPromptComposer with this segment's action, duration, and <d> dialogue
+    elUserIdea.value = seg.visual_action || "";
+    elDurationSec.value = String(seg.duration_seconds || 8.0);
+    updateCalcBadge();
+
+    const promptNode = findGraphNodeByType("H3AIPromptComposer");
+    if (promptNode) {
+      if (promptNode._h3SetDialogueLines) {
+        promptNode._h3SetDialogueLines(seg.dialogue_lines || [], elDialogueList);
+      }
+      pushToCanvasPromptNode();
+      elStatusMsg.textContent = `[Storyboard Seg #${idx + 1}/${storyboardState.segments.length}] Compiling H3 prompt via Ollama...`;
+      await promptNode._h3TriggerOllamaGenerate((res) => {
+        if (res && res.prompt) {
+          seg.compiled_h3_prompt = res.prompt;
+          elCompiledPrompt.value = res.prompt;
+          pushToCanvasPromptNode();
+        }
+      }, seg.transition_type === "CONTINUE_FRAME" && idx > 0);
+    }
+
+    // 4. Queue ComfyUI execution for this segment!
+    elStatusMsg.textContent = `[Storyboard Seg #${idx + 1}/${storyboardState.segments.length}] Rendering video + stereo audio in ComfyUI...`;
+    app.queuePrompt(0, 1);
+  }
+
+  elSbPlanBtn.addEventListener("click", async () => {
+    const origText = elSbPlanBtn.textContent;
+    elSbPlanBtn.disabled = true;
+    elSbPlanBtn.textContent = "Planning Multi-Segment Storyboard via Ollama...";
+    elStatusMsg.textContent = "Calling Ollama Director to split story into segments & <d> dialogues...";
+
+    try {
+      const resp = await api.fetchApi("/h3_studio/ollama/plan_storyboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story_synopsis: elSbSynopsis.value || elUserIdea.value || "",
+          target_total_duration_sec: parseFloat(elSbTotalDur.value) || 60.0,
+          pacing_mode: elSbPacing.value || "auto_adaptive",
+          characters_roster: getFullCharactersRoster(),
+          ollama_url: elOllamaUrl.value || "https://ollama.smixapp.com",
+          ollama_model: elOllamaModel.value || "minimax-m3:cloud",
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        storyboardState.segments = data.segments || [];
+        renderStoryboardQueue();
+        elStatusMsg.textContent = `${data.status} | Total: ${data.total_planned_sec}s (${data.total_planned_frames} frames)`;
+      } else {
+        elStatusMsg.textContent = `Storyboard HTTP Error ${resp.status}`;
+      }
+    } catch (e) {
+      elStatusMsg.textContent = `Storyboard Error: ${e.message}`;
+    } finally {
+      elSbPlanBtn.disabled = false;
+      elSbPlanBtn.textContent = origText;
+    }
+  });
+
+  elSbAddSegBtn.addEventListener("click", () => {
+    const nextIdx = storyboardState.segments.length + 1;
+    storyboardState.segments.push({
+      segment_index: nextIdx,
+      act_title: `Segment ${nextIdx}`,
+      transition_type: nextIdx === 1 ? "NEW_SCENE_CUT" : "CONTINUE_FRAME",
+      active_character_slots: [1],
+      duration_seconds: 8.0,
+      frame_length: 192,
+      visual_action: "",
+      dialogue_lines: [],
+      status: "pending",
+    });
+    renderStoryboardQueue();
+  });
+
+  elSbRunNextBtn.addEventListener("click", () => {
+    const nextPendingIdx = storyboardState.segments.findIndex((s) => s.status !== "done");
+    if (nextPendingIdx === -1) {
+      elStatusMsg.textContent = "All storyboard segments are already completed!";
+      return;
+    }
+    storyboardState.autopilotActive = false;
+    executeStoryboardSegmentAtIndex(nextPendingIdx);
+  });
+
+  elSbAutopilotBtn.addEventListener("click", () => {
+    if (storyboardState.autopilotActive) {
+      storyboardState.autopilotActive = false;
+      elSbAutopilotBtn.textContent = "Auto-Produce All (Autopilot)";
+      elStatusMsg.textContent = "Autopilot paused after current segment.";
+      return;
+    }
+    const nextPendingIdx = storyboardState.segments.findIndex((s) => s.status !== "done");
+    if (nextPendingIdx === -1) {
+      elStatusMsg.textContent = "No pending segments in storyboard queue.";
+      return;
+    }
+    storyboardState.autopilotActive = true;
+    elSbAutopilotBtn.textContent = "Stop Autopilot [Running]";
+    executeStoryboardSegmentAtIndex(nextPendingIdx);
+  });
+
   elScrubber.addEventListener("input", (e) => {
     if (nleState.playing) stopNLEPlayback();
     loadNLEFrame(parseInt(e.target.value, 10) || 0);
@@ -795,6 +1158,29 @@ function createNLEStudioWorkspace() {
     refreshSummary: (summary, nodeId) => {
       if (backdrop.classList.contains("open")) {
         renderNLETimeline(summary, nodeId);
+      }
+      // If a Storyboard Segment just finished rendering in ComfyUI, mark it done and trigger next segment if Autopilot is ON!
+      if (storyboardState.activeRunningIdx >= 0 && storyboardState.activeRunningIdx < storyboardState.segments.length) {
+        const finishedIdx = storyboardState.activeRunningIdx;
+        storyboardState.segments[finishedIdx].status = "done";
+        storyboardState.activeRunningIdx = -1;
+        renderStoryboardQueue();
+
+        if (storyboardState.autopilotActive) {
+          const nextIdx = storyboardState.segments.findIndex((s) => s.status !== "done");
+          if (nextIdx !== -1) {
+            elStatusMsg.textContent = `Segment #${finishedIdx + 1} complete! Autopilot advancing to Segment #${nextIdx + 1}...`;
+            setTimeout(() => {
+              if (storyboardState.autopilotActive) {
+                executeStoryboardSegmentAtIndex(nextIdx);
+              }
+            }, 900);
+          } else {
+            storyboardState.autopilotActive = false;
+            elSbAutopilotBtn.textContent = "Auto-Produce All (Autopilot)";
+            elStatusMsg.textContent = `All ${storyboardState.segments.length} Storyboard Segments rendered & stitched!`;
+          }
+        }
       }
     },
   };
@@ -1256,10 +1642,13 @@ function setupCharacterHubNodeUI(node) {
   panel.innerHTML = `
     <div class="h3-studio-header">
       <div class="h3-studio-title">
-        <span>MULTI-CHARACTER REFERENCE CARDS</span>
+        <span>MULTI-CHARACTER ROSTER (&lt;Subject 1..N&gt;)</span>
         <span class="h3-badge h3-badge-green" data-role="active-chars-badge">1 ON</span>
       </div>
-      <button type="button" class="h3-btn" data-action="open-nle">Studio View</button>
+      <div style="display:flex; gap:4px;">
+        <button type="button" class="h3-btn h3-btn-primary" data-action="add-char">+ Add Char</button>
+        <button type="button" class="h3-btn" data-action="open-nle">Studio View</button>
+      </div>
     </div>
     <div class="h3-list-container" data-role="char-list" style="max-height:280px;"></div>
   `;
@@ -1403,6 +1792,39 @@ function setupCharacterHubNodeUI(node) {
   }
 
   node._h3RenderNLEChars = renderCharCardsInto;
+  node._h3GetCharConfigs = () => charConfigs;
+  node._h3AddCharacterSlot = (extContainer, extBadge) => {
+    const nextSlot = charConfigs.length + 1;
+    charConfigs.push({
+      slot: nextSlot,
+      enabled: true,
+      name: `Char${nextSlot}`,
+      visual_traits: `character ${nextSlot} with distinct appearance`,
+      retention: "fully_preserved",
+      speaker_id: `S${nextSlot}`,
+      voice_desc: "natural expressive voice",
+      use_audio_ref: false,
+    });
+    renderCharCardsInto(elCharList);
+    if (extContainer && extContainer !== elCharList) {
+      renderCharCardsInto(extContainer, extBadge);
+    }
+  };
+  node._h3SetActiveSlots = (activeSlotNums, extContainer, extBadge) => {
+    const setNums = new Set((activeSlotNums || []).map((n) => parseInt(n, 10)));
+    charConfigs.forEach((cfg, idx) => {
+      const sNum = parseInt(cfg.slot || idx + 1, 10);
+      cfg.enabled = setNums.has(sNum);
+    });
+    renderCharCardsInto(elCharList);
+    if (extContainer && extContainer !== elCharList) {
+      renderCharCardsInto(extContainer, extBadge);
+    }
+  };
+
+  panel.querySelector('[data-action="add-char"]').addEventListener("click", () => {
+    node._h3AddCharacterSlot();
+  });
 
   panel.querySelector('[data-action="open-nle"]').addEventListener("click", () => {
     createNLEStudioWorkspace().open();
@@ -1573,6 +1995,13 @@ function setupPromptComposerNodeUI(node) {
   }
 
   node._h3RenderNLEDialogues = renderDialogueListInto;
+  node._h3SetDialogueLines = (newLines, extContainer) => {
+    dialogueLines = Array.isArray(newLines) ? JSON.parse(JSON.stringify(newLines)) : [];
+    renderDialogueListInto(elDialogueList);
+    if (extContainer && extContainer !== elDialogueList) {
+      renderDialogueListInto(extContainer);
+    }
+  };
   node._h3AddDialogueLine = () => {
     const nextIdx = dialogueLines.length + 1;
     dialogueLines.push({

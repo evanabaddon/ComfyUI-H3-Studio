@@ -16,6 +16,7 @@ from .nodes.ollama_client import (
     DEFAULT_OLLAMA_URL,
     fetch_ollama_models,
     generate_h3_prompt_via_ollama,
+    generate_storyboard_plan_via_ollama,
 )
 from .nodes.session_store import SessionStore, compute_h3_frame_length
 
@@ -175,6 +176,39 @@ try:
                 "effective_duration_sec": effective_sec,
                 "resolved_mode": mode,
                 "continuity": continuity_ctx,
+            }
+        )
+
+    @routes.post("/h3_studio/ollama/plan_storyboard")
+    async def api_post_plan_storyboard(request: "web.Request") -> "web.Response":
+        data: Dict[str, Any] = await request.json()
+        story_synopsis = str(data.get("story_synopsis", ""))
+        target_total_duration_sec = float(data.get("target_total_duration_sec", 60.0))
+        pacing_mode = str(data.get("pacing_mode", "auto_adaptive"))
+        characters_roster = data.get("characters_roster", [])
+        visual_style = str(data.get("visual_style", "Live-action, cinematic"))
+        default_language = str(data.get("default_language", "Indonesian"))
+        ollama_url = str(data.get("ollama_url", DEFAULT_OLLAMA_URL))
+        ollama_model = str(data.get("ollama_model", DEFAULT_OLLAMA_MODEL))
+
+        segments, status = generate_storyboard_plan_via_ollama(
+            story_synopsis=story_synopsis,
+            target_total_duration_sec=target_total_duration_sec,
+            pacing_mode=pacing_mode,
+            characters_roster=characters_roster if isinstance(characters_roster, list) else [],
+            visual_style=visual_style,
+            default_language=default_language,
+            ollama_url=ollama_url,
+            model_name=ollama_model,
+        )
+        total_planned_sec = round(sum(float(s.get("duration_seconds", 0.0)) for s in segments), 2)
+        total_planned_frames = sum(int(s.get("frame_length", 0)) for s in segments)
+        return web.json_response(
+            {
+                "segments": segments,
+                "status": status,
+                "total_planned_sec": total_planned_sec,
+                "total_planned_frames": total_planned_frames,
             }
         )
 
