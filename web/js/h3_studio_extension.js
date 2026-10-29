@@ -268,9 +268,14 @@ function createNLEStudioWorkspace() {
               <div class="h3-list-container" data-nle="dialogue-list" style="max-height:155px;"></div>
             </div>
 
-            <button type="button" class="h3-btn h3-btn-accent" data-nle="generate-prompt" style="padding:8px;">
-              Compile Compliant MiniMax-H3 Prompt via Ollama
-            </button>
+            <div style="display:flex; gap:6px;">
+              <button type="button" class="h3-btn h3-btn-accent" data-nle="generate-prompt" style="flex:1; padding:8px;">
+                Compile H3 Prompt via Ollama
+              </button>
+              <button type="button" class="h3-btn h3-btn-primary" data-nle="auto-continue-prompt" style="flex:1; padding:8px;" title="Lock current frame, read previous segment prompt &amp; frame, and let AI write the next seamless segment!">
+                AI Auto-Continue Next Seg
+              </button>
+            </div>
 
             <div style="flex:1; display:flex; flex-direction:column; min-height:110px;">
               <span class="h3-label" style="margin-bottom:4px;">COMPILED H3 PROMPT OUTPUT (EDITABLE)</span>
@@ -319,11 +324,15 @@ function createNLEStudioWorkspace() {
     fps: 24,
     totalFrames: 0,
     currentFrame: 0,
+    revision: 1,
+    nodeId: "latest",
     segments: [],
     playing: false,
-    playTimer: null,
+    playRaf: null,
+    audioEl: new Audio(),
     availableLoras: ["None"],
   };
+  nleState.audioEl.preload = "auto";
 
   function pullFromCanvasNodes() {
     // 1. Sync from H3CharacterReferenceHub
@@ -401,10 +410,18 @@ function createNLEStudioWorkspace() {
     } catch (e) {}
   }
 
-  function loadNLEFrame(frameIdx, nodeIdOverride) {
+  function buildFrameUrl(nodeId, frameIdx, rev) {
+    return api.apiURL(`/h3_studio/extender/frame/${encodeURIComponent(nodeId)}/${frameIdx}?rev=${encodeURIComponent(rev || 1)}`);
+  }
+
+  function buildAudioUrl(nodeId, rev) {
+    return api.apiURL(`/h3_studio/extender/audio/${encodeURIComponent(nodeId)}?rev=${encodeURIComponent(rev || 1)}`);
+  }
+
+  function loadNLEFrame(frameIdx, nodeIdOverride, onDone) {
     if (nleState.totalFrames <= 0) return;
     const extNode = findGraphNodeByType("H3InteractiveVideoExtender");
-    const nodeId = nodeIdOverride || (extNode ? String(extNode.id) : "latest");
+    const nodeId = nodeIdOverride || nleState.nodeId || (extNode ? String(extNode.id) : "latest");
     const clamped = Math.max(0, Math.min(frameIdx, nleState.totalFrames - 1));
     nleState.currentFrame = clamped;
     elScrubber.value = String(clamped);
@@ -416,16 +433,49 @@ function createNLEStudioWorkspace() {
       if (wSel) wSel.value = clamped;
     }
 
-    elMonitorImg.src = `/h3_studio/extender/frame/${encodeURIComponent(nodeId)}/${clamped}?t=${Date.now()}`;
-    elMonitorImg.style.display = "block";
-    elMonitorEmpty.style.display = "none";
+    const nextSrc = buildFrameUrl(nodeId, clamped, nleState.revision);
+    if (typeof onDone === "function") {
+      const pre = new Image();
+      pre.onload = () => {
+        elMonitorImg.src = nextSrc;
+        elMonitorImg.style.display = "block";
+        elMonitorEmpty.style.display = "none";
+        onDone();
+      };
+      pre.onerror = () => onDone();
+      pre.src = nextSrc;
+    } else {
+      elMonitorImg.src = nextSrc;
+      elMonitorImg.style.display = "block";
+      elMonitorEmpty.style.display = "none";
+    }
+  }
+
+  function stopNLEPlayback() {
+    nleState.playing = false;
+    if (nleState.playRaf) {
+      clearTimeout(nleState.playRaf);
+      nleState.playRaf = null;
+    }
+    try {
+      nleState.audioEl.pause();
+    } catch (e) {}
+    btnPlay.textContent = "Play";
   }
 
   function renderNLETimeline(summary, nodeId) {
     if (!summary) return;
+    stopNLEPlayback();
     nleState.fps = summary.fps || 24;
     nleState.totalFrames = summary.total_active_frames || 0;
+    nleState.revision = summary.revision || 1;
+    nleState.nodeId = summary.node_id || nodeId || "latest";
     nleState.segments = summary.segments || [];
+
+    // Preload stitched stereo audio if available
+    if (nleState.totalFrames > 0) {
+      nleState.audioEl.src = buildAudioUrl(nleState.nodeId, nleState.revision);
+    }
 
     elSegPill.textContent = `${nleState.segments.length} Segments`;
     elTotalDurPill.textContent = `${nleState.totalFrames}f (${(summary.total_duration_sec || 0).toFixed(2)}s)`;
@@ -569,36 +619,87 @@ function createNLEStudioWorkspace() {
   });
 
   elScrubber.addEventListener("input", (e) => {
+    if (nleState.playing) stopNLEPlayback();
     loadNLEFrame(parseInt(e.target.value, 10) || 0);
   });
 
-  backdrop.querySelector('[data-nle="jump-start"]').addEventListener("click", () => loadNLEFrame(0));
-  backdrop.querySelector('[data-nle="step-prev"]').addEventListener("click", () => loadNLEFrame(nleState.currentFrame - 1));
-  backdrop.querySelector('[data-nle="step-next"]').addEventListener("click", () => loadNLEFrame(nleState.currentFrame + 1));
-  backdrop.querySelector('[data-nle="jump-end"]').addEventListener("click", () => loadNLEFrame(Math.max(0, nleState.totalFrames - 1)));
+  backdrop.querySelector('[data-nle="jump-start"]').addEventListener("click", () => {
+    stopNLEPlayback();
+    loadNLEFrame(0);
+  });
+  backdrop.querySelector('[data-nle="step-prev"]').addEventListener("click", () => {
+    stopNLEPlayback();
+    loadNLEFrame(nleState.currentFrame - 1);
+  });
+  backdrop.querySelector('[data-nle="step-next"]').addEventListener("click", () => {
+    stopNLEPlayback();
+    loadNLEFrame(nleState.currentFrame + 1);
+  });
+  backdrop.querySelector('[data-nle="jump-end"]').addEventListener("click", () => {
+    stopNLEPlayback();
+    loadNLEFrame(Math.max(0, nleState.totalFrames - 1));
+  });
 
   btnPlay.addEventListener("click", () => {
     if (nleState.playing) {
-      clearInterval(nleState.playTimer);
-      nleState.playing = false;
-      btnPlay.textContent = "Play";
+      stopNLEPlayback();
       return;
     }
     if (nleState.totalFrames <= 1) return;
+
+    // If playhead is already at the very last frame, rewind to frame 0 automatically
+    if (nleState.currentFrame >= nleState.totalFrames - 1) {
+      nleState.currentFrame = 0;
+    }
+
     nleState.playing = true;
     btnPlay.textContent = "Pause";
-    nleState.playTimer = setInterval(() => {
-      loadNLEFrame((nleState.currentFrame + 1) % nleState.totalFrames);
-    }, Math.round(1000 / Math.max(1, nleState.fps)));
+
+    // Start synchronized stereo audio from the current frame timestamp
+    const startSec = nleState.currentFrame / Math.max(1, nleState.fps);
+    try {
+      nleState.audioEl.currentTime = startSec;
+      nleState.audioEl.play().catch(() => {});
+    } catch (e) {}
+
+    const frameIntervalMs = 1000 / Math.max(1, nleState.fps);
+    let lastTick = performance.now();
+
+    function stepPlayback() {
+      if (!nleState.playing) return;
+      const now = performance.now();
+      const elapsed = now - lastTick;
+      const framesToAdvance = Math.max(1, Math.floor(elapsed / frameIntervalMs));
+      lastTick = now;
+
+      let nextFrame = nleState.currentFrame + framesToAdvance;
+      if (nextFrame >= nleState.totalFrames) {
+        nextFrame = 0;
+        try {
+          nleState.audioEl.currentTime = 0;
+          nleState.audioEl.play().catch(() => {});
+        } catch (e) {}
+      }
+
+      loadNLEFrame(nextFrame, nleState.nodeId, () => {
+        if (!nleState.playing) return;
+        const decodeDuration = performance.now() - lastTick;
+        const waitMs = Math.max(4, Math.round(frameIntervalMs - decodeDuration));
+        nleState.playRaf = setTimeout(stepPlayback, waitMs);
+      });
+    }
+
+    stepPlayback();
   });
 
   backdrop.querySelector('[data-nle="lock-extend"]').addEventListener("click", async () => {
+    stopNLEPlayback();
     await sendExtenderAction({
       action: "lock_playhead",
       global_frame: nleState.currentFrame,
       trim_at_playhead: true,
     });
-    elStatusMsg.textContent = `Locked Frame ${nleState.currentFrame} as First-Frame Reference (<Picture 1>) & trimmed tail.`;
+    elStatusMsg.textContent = `Locked Frame ${nleState.currentFrame} as First-Frame Reference (<Picture 1>) & trimmed tail. Ready to extend!`;
   });
 
   backdrop.querySelector('[data-nle="undo-seg"]').addEventListener("click", async () => {
@@ -659,7 +760,30 @@ function createNLEStudioWorkspace() {
           elCompiledPrompt.value = res.prompt;
           elStatusMsg.textContent = `${res.status} | Mode: ${res.resolved_mode} | ${res.frame_length}f`;
         }
+      }, false);
+    }
+  });
+
+  backdrop.querySelector('[data-nle="auto-continue-prompt"]').addEventListener("click", async () => {
+    stopNLEPlayback();
+    if (nleState.totalFrames > 0) {
+      await sendExtenderAction({
+        action: "lock_playhead",
+        global_frame: nleState.currentFrame,
+        trim_at_playhead: true,
       });
+    }
+    pushToCanvasPromptNode();
+    const promptNode = findGraphNodeByType("H3AIPromptComposer");
+    if (promptNode && promptNode._h3TriggerOllamaGenerate) {
+      const nextSegNum = (nleState.segments ? nleState.segments.length : 0) + 1;
+      elStatusMsg.textContent = `Locking Frame ${nleState.currentFrame} & composing seamless continuation for Segment #${nextSegNum} via Ollama Vision...`;
+      await promptNode._h3TriggerOllamaGenerate((res) => {
+        if (res && res.prompt) {
+          elCompiledPrompt.value = res.prompt;
+          elStatusMsg.textContent = `Seg #${nextSegNum} Ready (${res.resolved_mode}, ${res.frame_length}f) — Click 'Queue Generation in ComfyUI' to extend!`;
+        }
+      }, true);
     }
   });
 
@@ -756,12 +880,26 @@ function setupExtenderNodeUI(node) {
     fps: 24,
     totalFrames: 0,
     currentFrame: 0,
+    revision: 1,
     segments: [],
     playing: false,
     timer: null,
+    audioEl: new Audio(),
   };
 
-  function loadFramePreview(frameIdx) {
+  function stopCanvasPlayback() {
+    state.playing = false;
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+    try {
+      state.audioEl.pause();
+    } catch (e) {}
+    btnPlay.textContent = "Play";
+  }
+
+  function loadFramePreview(frameIdx, onDone) {
     if (state.totalFrames <= 0) return;
     const clamped = Math.max(0, Math.min(frameIdx, state.totalFrames - 1));
     state.currentFrame = clamped;
@@ -770,16 +908,34 @@ function setupExtenderNodeUI(node) {
     elTcRight.textContent = formatSMPTETimecode(clamped, state.fps);
     if (wSelectedFrame) wSelectedFrame.value = clamped;
 
-    elFrameImg.src = `/h3_studio/extender/frame/${encodeURIComponent(node.id)}/${clamped}?t=${Date.now()}`;
-    elFrameImg.style.display = "block";
-    elEmptyMsg.style.display = "none";
+    const nextSrc = api.apiURL(`/h3_studio/extender/frame/${encodeURIComponent(node.id)}/${clamped}?rev=${encodeURIComponent(state.revision)}`);
+    if (typeof onDone === "function") {
+      const pre = new Image();
+      pre.onload = () => {
+        elFrameImg.src = nextSrc;
+        elFrameImg.style.display = "block";
+        elEmptyMsg.style.display = "none";
+        onDone();
+      };
+      pre.onerror = () => onDone();
+      pre.src = nextSrc;
+    } else {
+      elFrameImg.src = nextSrc;
+      elFrameImg.style.display = "block";
+      elEmptyMsg.style.display = "none";
+    }
   }
 
   function renderSummary(summary) {
     if (!summary) return;
+    stopCanvasPlayback();
     state.fps = summary.fps || 24;
     state.totalFrames = summary.total_active_frames || 0;
+    state.revision = summary.revision || 1;
     state.segments = summary.segments || [];
+    if (state.totalFrames > 0) {
+      state.audioEl.src = api.apiURL(`/h3_studio/extender/audio/${encodeURIComponent(node.id)}?rev=${encodeURIComponent(state.revision)}`);
+    }
 
     elSegBadge.textContent = `${state.segments.length} Segs`;
     elDurBadge.textContent = `${state.totalFrames}f (${(summary.total_duration_sec || 0).toFixed(2)}s)`;
@@ -848,17 +1004,47 @@ function setupExtenderNodeUI(node) {
 
   btnPlay.addEventListener("click", () => {
     if (state.playing) {
-      clearInterval(state.timer);
-      state.playing = false;
-      btnPlay.textContent = "Play";
+      stopCanvasPlayback();
       return;
     }
     if (state.totalFrames <= 1) return;
+    if (state.currentFrame >= state.totalFrames - 1) {
+      state.currentFrame = 0;
+    }
     state.playing = true;
     btnPlay.textContent = "Pause";
-    state.timer = setInterval(() => {
-      loadFramePreview((state.currentFrame + 1) % state.totalFrames);
-    }, Math.round(1000 / Math.max(1, state.fps)));
+    try {
+      state.audioEl.currentTime = state.currentFrame / Math.max(1, state.fps);
+      state.audioEl.play().catch(() => {});
+    } catch (e) {}
+
+    const frameIntervalMs = 1000 / Math.max(1, state.fps);
+    let lastTick = performance.now();
+
+    function stepCanvasPlay() {
+      if (!state.playing) return;
+      const now = performance.now();
+      const elapsed = now - lastTick;
+      const advance = Math.max(1, Math.floor(elapsed / frameIntervalMs));
+      lastTick = now;
+
+      let nextFrame = state.currentFrame + advance;
+      if (nextFrame >= state.totalFrames) {
+        nextFrame = 0;
+        try {
+          state.audioEl.currentTime = 0;
+          state.audioEl.play().catch(() => {});
+        } catch (e) {}
+      }
+
+      loadFramePreview(nextFrame, () => {
+        if (!state.playing) return;
+        const waitMs = Math.max(4, Math.round(frameIntervalMs - (performance.now() - lastTick)));
+        state.timer = setTimeout(stepCanvasPlay, waitMs);
+      });
+    }
+
+    stepCanvasPlay();
   });
 
   panel.querySelector('[data-action="lock-extend"]').addEventListener("click", async () => {
@@ -1274,7 +1460,10 @@ function setupPromptComposerNodeUI(node) {
 
     <div class="h3-btn-row">
       <button type="button" class="h3-btn h3-btn-accent" data-action="generate-now" style="flex:1; padding:7px;">
-        Compile H3 Prompt via Ollama
+        Compile H3 Prompt
+      </button>
+      <button type="button" class="h3-btn h3-btn-primary" data-action="auto-continue-now" style="flex:1; padding:7px;" title="Read previous segment prompt &amp; locked last frame to write next seamless segment">
+        AI Auto-Continue Seg
       </button>
     </div>
 
@@ -1425,14 +1614,18 @@ function setupPromptComposerNodeUI(node) {
     }
   }
 
-  async function triggerOllamaGenerate(onCompleteCallback) {
+  async function triggerOllamaGenerate(onCompleteCallback, autoContinueStory = false) {
     updateFrameCalcBadge();
     btnGenerate.disabled = true;
     const origLabel = btnGenerate.textContent;
-    btnGenerate.textContent = "Compiling H3 Prompt...";
-    elStatusText.textContent = "Calling Ollama LLM...";
+    btnGenerate.textContent = autoContinueStory ? "Extending Story..." : "Compiling H3 Prompt...";
+    elStatusText.textContent = autoContinueStory
+      ? "Reading locked frame & previous segment prompt via Ollama..."
+      : "Calling Ollama LLM...";
 
     try {
+      const extNode = findGraphNodeByType("H3InteractiveVideoExtender");
+      const charNode = findGraphNodeByType("H3CharacterReferenceHub");
       const payload = {
         user_idea: wUserIdea ? wUserIdea.value : "",
         mode: wMode ? wMode.value : "Auto",
@@ -1442,6 +1635,9 @@ function setupPromptComposerNodeUI(node) {
         ollama_url: wOllamaUrl ? wOllamaUrl.value : "https://ollama.smixapp.com",
         ollama_model: wOllamaModel ? wOllamaModel.value : elModelSelect.value,
         dialogue_lines: dialogueLines,
+        extender_node_id: extNode ? String(extNode.id) : "latest",
+        char_node_id: charNode ? String(charNode.id) : null,
+        auto_continue_story: Boolean(autoContinueStory),
       };
 
       const resp = await api.fetchApi("/h3_studio/ollama/generate_prompt", {
@@ -1471,7 +1667,11 @@ function setupPromptComposerNodeUI(node) {
 
   panel.querySelector('[data-action="fetch-models"]').addEventListener("click", refreshOllamaModels);
   panel.querySelector('[data-action="add-dialogue"]').addEventListener("click", () => node._h3AddDialogueLine());
-  btnGenerate.addEventListener("click", () => triggerOllamaGenerate());
+  btnGenerate.addEventListener("click", () => triggerOllamaGenerate(null, false));
+  const btnAutoContinue = panel.querySelector('[data-action="auto-continue-now"]');
+  if (btnAutoContinue) {
+    btnAutoContinue.addEventListener("click", () => triggerOllamaGenerate(null, true));
+  }
 
   node.addDOMWidget("h3_prompt_composer_dom", "custom_dom", panel, {
     serialize: false,

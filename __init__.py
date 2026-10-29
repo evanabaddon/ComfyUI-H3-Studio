@@ -42,7 +42,24 @@ try:
         jpeg_bytes = session.get_frame_jpeg_bytes(frame_idx, max_side=640)
         if jpeg_bytes is None:
             return web.Response(status=404, text="No frame in session")
-        return web.Response(body=jpeg_bytes, content_type="image/jpeg")
+        return web.Response(
+            body=jpeg_bytes,
+            content_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    @routes.get("/h3_studio/extender/audio/{node_id}")
+    async def api_get_extender_audio(request: "web.Request") -> "web.Response":
+        node_id = request.match_info.get("node_id", "0")
+        session = SessionStore.get().get_node_session(node_id)
+        wav_bytes = session.get_stitched_audio_wav_bytes()
+        if wav_bytes is None:
+            return web.Response(status=404, text="No audio in session")
+        return web.Response(
+            body=wav_bytes,
+            content_type="audio/wav",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @routes.post("/h3_studio/extender/action")
     async def api_post_extender_action(request: "web.Request") -> "web.Response":
@@ -95,6 +112,7 @@ try:
         ref_bundle = data.get("ref_bundle", None)
         extender_node_id = data.get("extender_node_id", None)
         char_node_id = data.get("char_node_id", None)
+        auto_continue_story = bool(data.get("auto_continue_story", False))
 
         frame_length, effective_sec = compute_h3_frame_length(duration_sec, fps=24.0)
 
@@ -103,9 +121,15 @@ try:
         if ref_bundle is None and char_node_id and str(char_node_id) in store.character_previews:
             ref_bundle = store.character_previews[str(char_node_id)]
 
+        ext_session = (
+            store.get_node_session(str(extender_node_id))
+            if extender_node_id
+            else store.get_active_or_latest_session()
+        )
+        continuity_ctx = ext_session.get_continuity_context()
+
         b64_images = []
-        if extender_node_id:
-            ext_session = store.get_node_session(str(extender_node_id))
+        if ext_session.get_total_active_frames() > 0:
             ref_tensor = ext_session.get_reference_frame_tensor()
             if ref_tensor is not None:
                 from .nodes.session_store import tensor_to_base64_jpeg
@@ -137,7 +161,12 @@ try:
             ollama_url=ollama_url,
             model_name=ollama_model,
             style_embedding=style_embedding,
+            continuity_context=continuity_ctx,
+            auto_continue_story=auto_continue_story,
         )
+        ext_session.pending_user_idea = user_idea
+        ext_session.pending_h3_prompt = prompt_text
+        ext_session.pending_resolved_mode = mode
         return web.json_response(
             {
                 "prompt": prompt_text,
@@ -145,6 +174,7 @@ try:
                 "frame_length": frame_length,
                 "effective_duration_sec": effective_sec,
                 "resolved_mode": mode,
+                "continuity": continuity_ctx,
             }
         )
 

@@ -150,11 +150,11 @@ class H3AIPromptComposer:
         # Wireless First-Frame Bridge: if no explicit first_frame_image wire is connected,
         # automatically pull the locked reference frame from the H3InteractiveVideoExtender session store!
         # This avoids ComfyUI "Circular node connection" DAG errors while seamlessly chaining segments.
+        ext_session = SessionStore.get().get_active_or_latest_session()
         effective_first_frame = first_frame_image
-        if effective_first_frame is None:
-            ext_session = SessionStore.get().get_active_or_latest_session()
-            if ext_session.get_total_active_frames() > 0:
-                effective_first_frame = ext_session.get_reference_frame_tensor()
+        if effective_first_frame is None and ext_session.get_total_active_frames() > 0:
+            effective_first_frame = ext_session.get_reference_frame_tensor()
+        continuity_ctx = ext_session.get_continuity_context()
 
         # 2. Resolve effective H3 mode
         has_ref_chars = bool(h3_ref_bundle and h3_ref_bundle.get("enabled", False))
@@ -206,6 +206,9 @@ class H3AIPromptComposer:
                     style_embedding=style_embedding,
                 )
                 status = f"Compiled locally in {resolved_mode} mode (0ms delay)"
+            ext_session.pending_user_idea = user_idea
+            ext_session.pending_h3_prompt = final_prompt
+            ext_session.pending_resolved_mode = resolved_mode
             print(f"[H3-Studio] Prompt ready ({resolved_mode}, {frame_length} frames / {effective_sec}s): {status}")
             return {
                 "ui": {
@@ -249,7 +252,11 @@ class H3AIPromptComposer:
             ollama_url=ollama_url,
             model_name=ollama_model,
             style_embedding=style_embedding,
+            continuity_context=continuity_ctx,
         )
+        ext_session.pending_user_idea = user_idea
+        ext_session.pending_h3_prompt = final_prompt
+        ext_session.pending_resolved_mode = resolved_mode
 
         return {
             "ui": {

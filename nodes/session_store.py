@@ -4,6 +4,7 @@ import os
 import shutil
 import threading
 import time
+import wave
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -82,6 +83,9 @@ class SegmentEntry:
         fps: float = 24.0,
         trim_start: int = 0,
         trim_end: Optional[int] = None,
+        user_idea: str = "",
+        h3_prompt: str = "",
+        resolved_mode: str = "",
     ):
         self.segment_id = segment_id
         self.images = images  # Tensor [F, H, W, C]
@@ -90,6 +94,9 @@ class SegmentEntry:
         self.total_frames = int(images.shape[0]) if images is not None else 0
         self.trim_start = max(0, int(trim_start))
         self.trim_end = int(trim_end) if trim_end is not None else max(0, self.total_frames - 1)
+        self.user_idea = user_idea
+        self.h3_prompt = h3_prompt
+        self.resolved_mode = resolved_mode
         self.created_at = time.time()
 
     @property
@@ -110,6 +117,9 @@ class SegmentEntry:
             "active_frames": self.active_frame_count,
             "duration_sec": round(self.active_frame_count / max(1.0, self.fps), 2),
             "has_audio": self.audio is not None and "waveform" in self.audio,
+            "user_idea": self.user_idea,
+            "h3_prompt": self.h3_prompt,
+            "resolved_mode": self.resolved_mode,
         }
 
 
@@ -126,6 +136,11 @@ class NodeSessionState:
         self.locked_ref_segment_idx: int = -1
         self.locked_ref_local_frame: int = -1
         self.last_input_signature: Optional[str] = None
+        self.pending_user_idea: str = ""
+        self.pending_h3_prompt: str = ""
+        self.pending_resolved_mode: str = ""
+        self.revision: int = 1
+        self._frame_jpeg_cache: Dict[Tuple[str, int, int], bytes] = {}
         self.lock = threading.Lock()
 
     def clear(self) -> None:
@@ -135,6 +150,8 @@ class NodeSessionState:
             self.locked_ref_segment_idx = -1
             self.locked_ref_local_frame = -1
             self.last_input_signature = None
+            self.revision += 1
+            self._frame_jpeg_cache.clear()
             if os.path.exists(self.cache_dir):
                 shutil.rmtree(self.cache_dir, ignore_errors=True)
             os.makedirs(self.cache_dir, exist_ok=True)
@@ -152,6 +169,7 @@ class NodeSessionState:
             self.locked_ref_segment_idx = -1
             self.locked_ref_local_frame = -1
             self.last_input_signature = None
+            self.revision += 1
             return True
 
     def append_segment(
@@ -175,8 +193,12 @@ class NodeSessionState:
                 fps=fps,
                 trim_start=trim_start,
                 trim_end=int(images.shape[0]) - 1,
+                user_idea=self.pending_user_idea,
+                h3_prompt=self.pending_h3_prompt,
+                resolved_mode=self.pending_resolved_mode,
             )
             self.segments.append(entry)
+            self.revision += 1
             if signature:
                 self.last_input_signature = signature
             # Default playhead & reference frame to the very last frame of the newly added segment
@@ -264,6 +286,7 @@ class NodeSessionState:
                     if s_idx < len(self.segments) - 1:
                         self.segments = self.segments[: s_idx + 1]
                     self.playhead_global_frame = max(0, self.get_total_active_frames() - 1)
+                    self.revision += 1
 
             return self.to_summary()
 
@@ -383,6 +406,9 @@ class NodeSessionState:
             if s_idx < 0 or s_idx >= len(self.segments):
                 return None
             seg = self.segments[s_idx]
+            cache_key = (seg.segment_id, l_frame, max_side)
+            if cache_key in self._frame_jpeg_cache:
+                return self._frame_jpeg_cache[cache_key]
             pil_img = tensor_to_pil(seg.images, index=l_frame)
             if pil_img is None:
                 return None
@@ -394,12 +420,83 @@ class NodeSessionState:
                 pil_img = pil_img.convert("RGB")
             buf = io.BytesIO()
             pil_img.save(buf, format="JPEG", quality=82)
-            return buf.getvalue()
+            jpeg_bytes = buf.getvalue()
+            if len(self._frame_jpeg_cache) > 600:
+                self._frame_jpeg_cache.clear()
+            self._frame_jpeg_cache[cache_key] = jpeg_bytes
+            return jpeg_bytes
+
+    def get_stitched_audio_wav_bytes(self, crossfade_ms: int = 40) -> Optional[bytes]:
+        """Encode stitched stereo audio into an in-memory 16-bit PCM WAV for browser playback."""
+        _, stitched_aud = self.get_stitched_images_and_audio(crossfade_ms=crossfade_ms)
+        if stitched_aud is None or np is None:
+            return None
+        wf = stitched_aud.get("waveform")
+        sr = int(stitched_aud.get("sample_rate", 32000))
+        if wf is None:
+            return None
+        if torch is not None and isinstance(wf, torch.Tensor):
+            arr = wf.detach().cpu().float().numpy()
+        elif isinstance(wf, np.ndarray):
+            arr = wf.astype(np.float32)
+        else:
+            return None
+
+        # Normalize shape to [channels, samples]
+        if arr.ndim == 3:
+            arr = arr[0]
+        elif arr.ndim == 1:
+            arr = arr[np.newaxis, :]
+        if arr.shape[0] > 2 and arr.shape[1] <= 2:
+            arr = arr.T
+        channels = min(2, arr.shape[0])
+        interleaved = np.clip(arr[:channels].T, -1.0, 1.0)
+        pcm16 = (interleaved * 32767.0).astype(np.int16)
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf_out:
+            wf_out.setnchannels(channels)
+            wf_out.setsampwidth(2)
+            wf_out.setframerate(sr)
+            wf_out.writeframes(pcm16.tobytes())
+        return buf.getvalue()
+
+    def get_continuity_context(self) -> Dict[str, Any]:
+        """Return story and prompt history from active segments up to the locked reference segment."""
+        if not self.segments:
+            return {
+                "is_continuation": False,
+                "next_segment_number": 1,
+                "previous_prompts": [],
+                "previous_ideas": [],
+                "last_prompt": "",
+                "last_idea": "",
+            }
+        cutoff = (
+            self.locked_ref_segment_idx
+            if 0 <= self.locked_ref_segment_idx < len(self.segments)
+            else len(self.segments) - 1
+        )
+        active_segs = self.segments[: cutoff + 1]
+        prev_prompts = [s.h3_prompt for s in active_segs if s.h3_prompt]
+        prev_ideas = [s.user_idea for s in active_segs if s.user_idea]
+        return {
+            "is_continuation": True,
+            "next_segment_number": len(active_segs) + 1,
+            "locked_segment_index": cutoff,
+            "locked_local_frame": self.locked_ref_local_frame,
+            "previous_prompts": prev_prompts,
+            "previous_ideas": prev_ideas,
+            "last_prompt": prev_prompts[-1] if prev_prompts else self.pending_h3_prompt,
+            "last_idea": prev_ideas[-1] if prev_ideas else self.pending_user_idea,
+        }
 
     def to_summary(self) -> Dict[str, Any]:
         total_active = self.get_total_active_frames()
+        cont = self.get_continuity_context()
         return {
             "node_id": self.node_id,
+            "revision": self.revision,
             "fps": self.fps,
             "segment_count": len(self.segments),
             "total_active_frames": total_active,
@@ -407,6 +504,7 @@ class NodeSessionState:
             "playhead_global_frame": min(self.playhead_global_frame, max(0, total_active - 1)),
             "locked_ref_segment_idx": self.locked_ref_segment_idx,
             "locked_ref_local_frame": self.locked_ref_local_frame,
+            "continuity": cont,
             "segments": [seg.to_meta(i) for i, seg in enumerate(self.segments)],
         }
 

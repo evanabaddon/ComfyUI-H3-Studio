@@ -143,6 +143,8 @@ def build_h3_user_message(
     has_first_frame: bool = False,
     has_last_frame: bool = False,
     style_embedding: str = "none",
+    continuity_context: Optional[Dict[str, Any]] = None,
+    auto_continue_story: bool = False,
 ) -> str:
     """
     Assemble the structured user context describing active characters (<Subject N>),
@@ -223,8 +225,37 @@ def build_h3_user_message(
                     f"{idx}. Speaker: {spk} | Delivery: {delivery}{vo_str} | Mandatory tag: <d>[{lang}] {text}</d>"
                 )
 
+    if continuity_context and continuity_context.get("is_continuation"):
+        next_seg_num = continuity_context.get("next_segment_number", 2)
+        last_prompt = (continuity_context.get("last_prompt") or "").strip()
+        last_idea = (continuity_context.get("last_idea") or "").strip()
+        lines.append(f"\n=== MULTI-SEGMENT CONTINUITY CONTEXT (EXTENDING TO SEGMENT #{next_seg_num}) ===")
+        lines.append(
+            "CRITICAL CONTINUITY RULE: This segment is a direct, seamless continuation starting at 0.00s from `<Picture 1>` "
+            "(which is the exact final locked frame of the previous segment). "
+            "Maintain the exact environment, lighting, camera focal length, subject clothing, and ambient soundscape so the cut between Segment "
+            f"{next_seg_num - 1} and Segment {next_seg_num} is invisible."
+        )
+        if last_idea:
+            lines.append(f"Previous Segment User Direction: {last_idea}")
+        if last_prompt:
+            lines.append(f"Previous Segment Compiled H3 Prompt (match its environment, lighting, and overall_soundscape):\n{last_prompt}")
+
     lines.append("\n=== USER STORY / SCENE REQUEST ===")
-    lines.append(user_idea.strip() if user_idea.strip() else "Create a natural, vivid continuation of the reference frame/characters with lifelike motion and ambient sound.")
+    if auto_continue_story and continuity_context and continuity_context.get("is_continuation"):
+        direction_hint = user_idea.strip()
+        lines.append(
+            "AUTO-CONTINUE MODE: Inspect the attached `<Picture 1>` (final frame of the previous segment) and the Previous Segment H3 Prompt above. "
+            "Write the natural next 5-second beat of action, subtle camera progression, and lifelike motion that evolves smoothly from `<Picture 1>` "
+            "without teleporting subjects or changing the room/lighting."
+            + (f" Incorporate this additional user direction for the new segment: {direction_hint}" if direction_hint else "")
+        )
+    else:
+        lines.append(
+            user_idea.strip()
+            if user_idea.strip()
+            else "Create a natural, vivid continuation of the reference frame/characters with lifelike motion and ambient sound."
+        )
     lines.append(
         "\nNow write ONLY the complete MiniMax-H3 prompt strictly following all formatting, label, camera motion, and <d> dialogue rules."
     )
@@ -242,6 +273,8 @@ def generate_h3_prompt_via_ollama(
     ollama_url: str = DEFAULT_OLLAMA_URL,
     model_name: str = DEFAULT_OLLAMA_MODEL,
     style_embedding: str = "none",
+    continuity_context: Optional[Dict[str, Any]] = None,
+    auto_continue_story: bool = False,
     temperature: float = 0.4,
     timeout: float = 25.0,
 ) -> Tuple[str, str]:
@@ -260,6 +293,8 @@ def generate_h3_prompt_via_ollama(
         ref_bundle=ref_bundle,
         dialogue_lines=dialogue_lines,
         style_embedding=style_embedding,
+        continuity_context=continuity_context,
+        auto_continue_story=auto_continue_story,
     )
 
     user_message_obj: Dict[str, Any] = {
