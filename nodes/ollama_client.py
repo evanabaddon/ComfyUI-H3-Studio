@@ -504,6 +504,208 @@ def compute_adaptive_segment_duration(
     return max(min_sec, min(max_sec, rounded))
 
 
+def compile_segment_h3_prompt(
+    seg_item: Dict[str, Any],
+    roster: List[Dict[str, Any]],
+    visual_style: str = "Live-action, cinematic",
+) -> str:
+    """
+    Build a complete, ready-to-render 6-section MiniMax-H3 Ref2VA (or I2VA/T2VA) prompt
+    for a single storyboard segment based on its active_character_slots, transition_type,
+    visual_action, dialogue_lines, soundscape, and duration_seconds.
+    """
+    t_type = str(seg_item.get("transition_type", "NEW_SCENE_CUT")).upper()
+    has_ff = t_type == "CONTINUE_FRAME"
+    eff_sec = float(seg_item.get("duration_seconds", 8.0))
+    active_slots = seg_item.get("active_character_slots", [1])
+    if not isinstance(active_slots, list) or not active_slots:
+        active_slots = [1]
+
+    # Map active_slots to dynamic <Subject 1..K> and <Picture 1..M>
+    pic_idx = 1
+    subj_defs: List[str] = []
+    ret_lines: List[str] = []
+    alias_to_subj: Dict[str, Tuple[str, str]] = {}
+
+    if has_ff:
+        subj_defs.append(
+            f"<Picture {pic_idx}> is the first frame of [Shot 1], establishing the opening composition and scene state."
+        )
+        ret_lines.append(
+            f"<Picture {pic_idx}> ([Shot 1] first frame): fully_preserved - the initial framing, lighting, and subject placement are retained at 0.00 seconds."
+        )
+        pic_idx += 1
+
+    active_subj_idx = 0
+    has_any_audio_ref = False
+    audio_idx = 1
+
+    for slot_num in active_slots:
+        char_obj = next((c for c in roster if int(c.get("slot", 1)) == int(slot_num)), None)
+        if not char_obj:
+            char_obj = {
+                "slot": slot_num,
+                "name": f"Char{slot_num}",
+                "speaker_id": f"S{slot_num}",
+                "visual_traits": f"character {slot_num} with consistent appearance",
+                "retention": "fully_preserved",
+                "voice_desc": "natural expressive voice",
+                "use_audio_ref": False,
+            }
+        active_subj_idx += 1
+        st = f"<Subject {active_subj_idx}>"
+        pt = f"<Picture {pic_idx}>"
+        pic_idx += 1
+
+        c_name = str(char_obj.get("name", f"Char{slot_num}")).strip()
+        spk_id = str(char_obj.get("speaker_id", f"S{active_subj_idx}")).strip()
+        traits = str(char_obj.get("visual_traits", "")).strip() or "the character with distinct facial features and attire"
+        ret = str(char_obj.get("retention", "fully_preserved")).strip() or "fully_preserved"
+
+        alias_to_subj[c_name.lower()] = (st, spk_id)
+        alias_to_subj[f"char{slot_num}".lower()] = (st, spk_id)
+        alias_to_subj[f"slot {slot_num}".lower()] = (st, spk_id)
+
+        subj_defs.append(f"{st} is {traits} in {pt}.")
+        ret_lines.append(
+            f"{st} (appears in [Shot 1]): {ret} - character identity, facial features, and clothing are preserved."
+        )
+
+        if char_obj.get("use_audio_ref"):
+            has_any_audio_ref = True
+            at = f"<Audio {audio_idx}>"
+            audio_idx += 1
+            subj_defs.append(f"{at} is the voice-timbre reference for {st} ({spk_id}).")
+            ret_lines.append(
+                f"{at}: reference - vocal timbre guides the spoken delivery of {st} without copying the raw signal."
+            )
+
+    # Replace character names in visual_action with <Subject K> where helpful
+    action_text = str(seg_item.get("visual_action", "")).strip()
+    for alias_key, (st, _spk) in alias_to_subj.items():
+        if alias_key and len(alias_key) >= 3:
+            action_text = re.sub(rf"\b{re.escape(alias_key)}\b", st, action_text, flags=re.IGNORECASE)
+
+    # Format <d> dialogue lines
+    dlg_snippets: List[str] = []
+    for d_idx, dl in enumerate(seg_item.get("dialogue_lines", []) or []):
+        txt = str(dl.get("text", "")).strip()
+        if not txt:
+            continue
+        raw_spk = str(dl.get("speaker", f"<Subject 1> (S1)")).strip()
+        # Map speaker name if it matches an alias
+        for alias_key, (st, spk_id) in alias_to_subj.items():
+            if alias_key and alias_key in raw_spk.lower():
+                raw_spk = f"{st} ({spk_id})"
+                break
+        lang = str(dl.get("language", "Indonesian")).strip() or "Indonesian"
+        deliv = str(dl.get("delivery", "a natural expressive voice")).strip()
+        if dl.get("voiceover"):
+            dlg_snippets.append(
+                f"{raw_spk} says in an off-screen voiceover: <d>[{lang}] {txt}</d> while their lips remain completely closed."
+            )
+        else:
+            dlg_snippets.append(
+                f"{raw_spk} speaks in {deliv}: <d>[{lang}] {txt}</d> and then closes their lips naturally."
+            )
+
+    dlg_block = (" " + " ".join(dlg_snippets)) if dlg_snippets else ""
+    soundscape = (
+        str(seg_item.get("soundscape", "")).strip()
+        or "Natural environmental room tone, subtle footsteps, and cloth movement sounds accompany the scene throughout the video."
+    )
+    music = str(seg_item.get("music", "")).strip() or "N/A"
+    summary_text = (
+        str(seg_item.get("summary_line", "")).strip()
+        or f"The target video depicts Segment {seg_item.get('segment_index', 1)} ({seg_item.get('act_title', 'Scene')}) over {eff_sec:.2f} seconds."
+    )
+
+    task_types = ["reference generation"]
+    if has_ff:
+        task_types.insert(0, "keyframe completion")
+    if has_any_audio_ref:
+        task_types.append("audio reference")
+    task_prefix = "[" + " + ".join(task_types) + "]"
+
+    ff_open = "The shot begins seamlessly from <Picture 1>. " if has_ff else ""
+    full_prompt = (
+        "subject_definitions:\n"
+        + "\n".join(subj_defs)
+        + "\n\nsummary:\n"
+        + f"{task_prefix} {summary_text}\n\n"
+        + "retention_analysis:\n"
+        + "\n".join(ret_lines)
+        + "\n\ndetailed_description:\n"
+        + f"The target video uses a {visual_style.lower()} style.\n"
+        + f"[Shot 1] {ff_open}{action_text}{dlg_block}\n\n"
+        + f"overall_soundscape:\n{soundscape}\n\n"
+        + f"non_diegetic_music:\n{music}"
+    )
+    return sanitize_dialogue_tags(full_prompt)
+
+
+def _extract_json_array_robust(raw_text: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Robustly parse a JSON array of segment objects from LLM output even if wrapped in
+    markdown blocks, trailing commas, or truncated at the end.
+    """
+    cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+    cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+
+    start_idx = cleaned.find("[")
+    if start_idx == -1:
+        return None
+
+    end_idx = cleaned.rfind("]")
+    candidate = cleaned[start_idx : end_idx + 1] if (end_idx != -1 and end_idx > start_idx) else cleaned[start_idx:]
+    # Remove trailing commas before } or ]
+    candidate_fixed = re.sub(r",\s*([}\]])", r"\1", candidate)
+
+    try:
+        parsed = json.loads(candidate_fixed)
+        if isinstance(parsed, list) and len(parsed) > 0:
+            return parsed
+    except Exception:
+        pass
+
+    # Fallback: extract individual top-level `{ ... }` segment objects if the array was truncated
+    objects: List[Dict[str, Any]] = []
+    depth = 0
+    obj_start = -1
+    in_str = False
+    esc = False
+    for idx, ch in enumerate(cleaned[start_idx:]):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                obj_start = start_idx + idx
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and obj_start != -1:
+                frag = cleaned[obj_start : start_idx + idx + 1]
+                frag = re.sub(r",\s*([}\]])", r"\1", frag)
+                try:
+                    obj = json.loads(frag)
+                    if isinstance(obj, dict) and ("visual_action" in obj or "dialogue_lines" in obj):
+                        objects.append(obj)
+                except Exception:
+                    pass
+                obj_start = -1
+    return objects if objects else None
+
+
 def generate_storyboard_plan_via_ollama(
     story_synopsis: str,
     target_total_duration_sec: float = 60.0,
@@ -513,14 +715,13 @@ def generate_storyboard_plan_via_ollama(
     default_language: str = "Indonesian",
     ollama_url: str = DEFAULT_OLLAMA_URL,
     model_name: str = DEFAULT_OLLAMA_MODEL,
-    timeout: float = 45.0,
+    timeout: float = 75.0,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
-    Break a long story or episode script into a multi-segment MiniMax-H3 Storyboard Queue.
-    Supports stories up to 10+ minutes (600s) by planning structured acts/scenes, assigning
-    active character slots (1..N), writing natural <d> dialogue lines per segment, choosing
-    between `CONTINUE_FRAME` (seamless frame extend) and `NEW_SCENE_CUT` (anti-degradation scene reset),
-    and computing adaptive segment durations (5s - 15s max per H3 clip).
+    AI Episode Prompt Generator:
+    Takes a story idea (short or long) and uses Ollama LLM to write an entire multi-segment
+    episode screenplay AND compiles a complete 6-section MiniMax-H3 prompt (`compiled_h3_prompt`)
+    for every single segment up front!
     """
     roster = characters_roster or [
         {"slot": 1, "name": "Char1", "speaker_id": "S1", "visual_traits": "lead character", "voice_desc": "clear natural voice"}
@@ -537,7 +738,6 @@ def generate_storyboard_plan_via_ollama(
         )
     roster_block = "\n".join(roster_desc_lines)
 
-    # Determine segment duration target
     if pacing_mode == "fast_5s":
         avg_seg_sec = 5.0
     elif pacing_mode == "standard_8s":
@@ -549,41 +749,41 @@ def generate_storyboard_plan_via_ollama(
     else:
         avg_seg_sec = 8.0
 
-    est_segments = max(2, min(80, int(round(float(target_total_duration_sec) / avg_seg_sec))))
-    # To keep single LLM response fast & valid JSON, cap single batch generation at 24 segments
-    # (for a 10-minute movie, users can either generate 24 x 12-15s segments = ~5-6 mins or click "+ Expand Next Act")
-    batch_seg_count = min(24, est_segments)
+    est_segments = max(2, min(60, int(round(float(target_total_duration_sec) / avg_seg_sec))))
+    # Keep single LLM call around 12 segments max so cloud LLM finishes within timeout and never truncates JSON
+    batch_seg_count = min(12, est_segments)
 
     system_prompt = (
-        "You are an Master AI Film Director & Screenwriter for the MiniMax-H3 Omni-Modal Video+Audio Engine.\n"
-        "Your job is to break the user's story into a sequential array of video segments.\n"
-        "Output ONLY a valid JSON array `[ ... ]` (no markdown fences, no commentary outside JSON).\n\n"
-        "Each element in the JSON array MUST be an object with these exact keys:\n"
+        "You are an AI Episode Screenwriter & MiniMax-H3 Prompt Director.\n"
+        "The user will give you a story premise or synopsis. You MUST creatively write and expand the story into a complete sequential episode of video segments.\n"
+        "DO NOT just split or copy the user's sentences — invent vivid cinematic camera movements, dramatic progression, emotional facial expressions, environmental soundscapes, and natural spoken dialogue lines for each segment!\n"
+        "Output ONLY a valid JSON array `[ ... ]` with no markdown commentary.\n\n"
+        "Each element in the JSON array MUST follow this schema:\n"
         "{\n"
         '  "segment_index": 1,\n'
-        '  "act_title": "Act I - Opening",\n'
+        '  "act_title": "Act I - Scene Title",\n'
         '  "transition_type": "NEW_SCENE_CUT" or "CONTINUE_FRAME",\n'
         '  "active_character_slots": [1, 2],\n'
         '  "duration_seconds": 8.0,\n'
-        '  "visual_action": "Detailed English description of camera motion (Push In/Pull Out/Pan/Tracking), character blocking, and scene action using character names",\n'
+        '  "visual_action": "Detailed cinematic English description of camera motion (e.g. Push In / Tracking Shot / Pan Right at slow speed), character blocking, micro-expressions, and physical action.",\n'
+        '  "soundscape": "Specific ambient sounds and foley (e.g. rain tapping on glass, footsteps on wet pavement, cafe murmur).",\n'
+        '  "music": "N/A or specific background music mood",\n'
         '  "dialogue_lines": [\n'
-        '    {"speaker": "<Subject 1> (S1)", "language": "' + default_language + '", "text": "Spoken line here.", "delivery": "warm expressive tone", "voiceover": false}\n'
+        '    {"speaker": "<Subject 1> (S1)", "language": "' + default_language + '", "text": "Original spoken line written by you for this moment.", "delivery": "warm expressive tone", "voiceover": false}\n'
         "  ]\n"
         "}\n\n"
-        "RULES FOR HIGH-QUALITY MULTI-SEGMENT DIRECTION:\n"
-        "1. `transition_type`: Segment 1 MUST be `NEW_SCENE_CUT`. Use `CONTINUE_FRAME` when the next segment continues the exact same shot/conversation seamlessly from the previous segment's final frame. "
-        "Every 3 to 4 segments (or whenever location/camera angle changes), use `NEW_SCENE_CUT` so the video generator resets visual sharpness while keeping character faces locked via Ref2VA!\n"
-        "2. `active_character_slots`: Array of integer slot numbers (from the Character Roster) visible or speaking in this segment. If a new character enters the story in a later segment, activate their slot number in that segment!\n"
-        "3. `duration_seconds`: Must be between 5.0 and 15.0 seconds (MiniMax-H3 maximum is 15.0s). Match duration to the length of spoken dialogue (~2.5 words per second).\n"
-        f"4. Write `visual_action` in vivid cinematic English, and write `dialogue_lines[].text` in {default_language}."
+        "CRITICAL RULES:\n"
+        "1. Segment 1 MUST be `NEW_SCENE_CUT`. Use `CONTINUE_FRAME` when continuing the exact same camera shot from the previous segment's last frame. Use `NEW_SCENE_CUT` every 3-4 segments or when changing camera angles/locations.\n"
+        "2. `active_character_slots`: Array of slot numbers (from Character Roster) present in this segment. Note that dentro de each segment, the active characters are dynamically indexed `<Subject 1>`, `<Subject 2>`, etc. in order of their active slots.\n"
+        f"3. Every segment should have natural spoken `dialogue_lines` in {default_language} that advance the plot, plus rich English `visual_action` and `soundscape`."
     )
 
     user_prompt = (
-        f"CHARACTER ROSTER AVAILABLE (1..N):\n{roster_block}\n\n"
+        f"CHARACTER ROSTER (Slots 1..{len(roster)}):\n{roster_block}\n\n"
         f"VISUAL STYLE: {visual_style}\n"
-        f"TARGET TOTAL DURATION: {target_total_duration_sec:.0f} seconds (~{batch_seg_count} segments in this plan, each 5.0s to 15.0s)\n\n"
-        f"STORY / EPISODE SYNOPSIS:\n{story_synopsis.strip() or 'Two friends meet at a rainy train station, discover a mysterious map, and embark on a journey together as new allies join them.'}\n\n"
-        f"Return ONLY the JSON array of {batch_seg_count} segments:"
+        f"EPISODE TARGET: Generate {batch_seg_count} sequential segments (~{avg_seg_sec:.0f}s each, between 5s and 15s).\n\n"
+        f"USER STORY PREMISE / SYNOPSIS:\n{story_synopsis.strip() or 'Two characters meet at a mysterious neon-lit cafe during a rainstorm to exchange a secret digital key, when a third rival character arrives.'}\n\n"
+        f"Output ONLY the JSON array of {batch_seg_count} segments:"
     )
 
     payload = {
@@ -593,7 +793,7 @@ def generate_storyboard_plan_via_ollama(
             {"role": "user", "content": user_prompt},
         ],
         "stream": False,
-        "options": {"temperature": 0.45},
+        "options": {"temperature": 0.55},
     }
 
     url = ollama_url.rstrip("/") + "/api/chat"
@@ -604,27 +804,25 @@ def generate_storyboard_plan_via_ollama(
         method="POST",
     )
 
-    print(f"[H3-Studio] Generating {batch_seg_count}-segment Storyboard Plan via Ollama ({model_name})...")
+    print(f"[H3-Studio] Generating {batch_seg_count}-segment AI EpisodePrompts via Ollama ({model_name})...")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp_json = json.loads(resp.read().decode("utf-8"))
         raw = resp_json.get("message", {}).get("content", "").strip()
-        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        # Extract JSON array
-        start_idx = raw.find("[")
-        end_idx = raw.rfind("]")
-        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-            raw_json = raw[start_idx : end_idx + 1]
-            parsed = json.loads(raw_json)
-            if isinstance(parsed, list) and len(parsed) > 0:
-                normalized = _normalize_storyboard_segments(parsed, roster, pacing_mode, avg_seg_sec, default_language)
-                print(f"[H3-Studio] Storyboard Plan ready: {len(normalized)} segments.")
-                return normalized, f"Planned {len(normalized)} segments via {model_name}"
+        if not raw and "response" in resp_json:
+            raw = str(resp_json["response"]).strip()
+        parsed = _extract_json_array_robust(raw)
+        if parsed and len(parsed) > 0:
+            normalized = _normalize_storyboard_segments(
+                parsed, roster, pacing_mode, avg_seg_sec, default_language, visual_style
+            )
+            print(f"[H3-Studio] AI Episode Storyboard ready: {len(normalized)} full H3 prompts compiled.")
+            return normalized, f"AI Episode Generated ({len(normalized)} full H3 prompts via {model_name})"
     except Exception as e:
         err_msg = str(e)
         print(f"[H3-Studio] Storyboard Ollama fallback ({err_msg}). Building deterministic multi-segment plan.")
     else:
-        err_msg = "Invalid JSON response"
+        err_msg = "Model output could not be parsed as JSON"
 
     fallback_segs = _build_fallback_storyboard(
         story_synopsis=story_synopsis,
@@ -632,8 +830,9 @@ def generate_storyboard_plan_via_ollama(
         roster=roster,
         avg_seg_sec=avg_seg_sec,
         default_language=default_language,
+        visual_style=visual_style,
     )
-    return fallback_segs, f"Planned {len(fallback_segs)} segments (Local Storyboard Compiler: {err_msg})"
+    return fallback_segs, f"Offline Fallback ({err_msg} — check Ollama model/connection)"
 
 
 def _normalize_storyboard_segments(
@@ -642,6 +841,7 @@ def _normalize_storyboard_segments(
     pacing_mode: str,
     avg_seg_sec: float,
     default_language: str,
+    visual_style: str = "Live-action, cinematic",
 ) -> List[Dict[str, Any]]:
     from .session_store import compute_h3_frame_length
 
@@ -685,7 +885,7 @@ def _normalize_storyboard_segments(
             dur_sec = max(5.0, min(15.0, raw_dur))
 
         frame_len, eff_sec = compute_h3_frame_length(dur_sec, fps=24.0)
-        out.append({
+        seg_dict: Dict[str, Any] = {
             "segment_index": seg_num,
             "act_title": str(item.get("act_title", f"Segment {seg_num}")),
             "transition_type": t_type,
@@ -693,10 +893,13 @@ def _normalize_storyboard_segments(
             "duration_seconds": eff_sec,
             "frame_length": frame_len,
             "visual_action": str(item.get("visual_action", "")).strip() or "The characters continue the scene with natural motion.",
+            "soundscape": str(item.get("soundscape", "")).strip(),
+            "music": str(item.get("music", "N/A")).strip(),
             "dialogue_lines": clean_dlgs,
-            "compiled_h3_prompt": "",
             "status": "pending",
-        })
+        }
+        seg_dict["compiled_h3_prompt"] = compile_segment_h3_prompt(seg_dict, roster, visual_style=visual_style)
+        out.append(seg_dict)
     return out
 
 
@@ -706,6 +909,7 @@ def _build_fallback_storyboard(
     roster: List[Dict[str, Any]],
     avg_seg_sec: float,
     default_language: str,
+    visual_style: str = "Live-action, cinematic",
 ) -> List[Dict[str, Any]]:
     from .session_store import compute_h3_frame_length
 
@@ -725,9 +929,7 @@ def _build_fallback_storyboard(
     for i in range(max(2, segment_count)):
         seg_num = i + 1
         beat_text = sentences[i % len(sentences)]
-        # Every 3rd segment starts a fresh camera angle/cut to prevent long-chain VAE drift
         t_type = "NEW_SCENE_CUT" if (i == 0 or i % 3 == 0) else "CONTINUE_FRAME"
-        # Progressively introduce characters across segments
         active_count = min(len(all_slots), 1 + (i // 2))
         active_slots = all_slots[:active_count]
 
@@ -736,7 +938,6 @@ def _build_fallback_storyboard(
         spk_idx = active_slots.index(spk_slot) + 1
         spk_id = char_obj.get("speaker_id", f"S{spk_slot}")
 
-        # Extract quoted dialogue if user wrote quotes in their synopsis, otherwise create natural beat line
         quote_match = re.search(r'["“”]([^"“”]{3,140})["“”]', beat_text)
         dlg_text = quote_match.group(1).strip() if quote_match else ""
 
@@ -753,7 +954,7 @@ def _build_fallback_storyboard(
         dur_sec = compute_adaptive_segment_duration(dlgs, preferred_sec=avg_seg_sec)
         frame_len, eff_sec = compute_h3_frame_length(dur_sec, fps=24.0)
 
-        segs.append({
+        seg_dict: Dict[str, Any] = {
             "segment_index": seg_num,
             "act_title": f"Part {(i // 3) + 1} - Beat {seg_num}",
             "transition_type": t_type,
@@ -762,7 +963,8 @@ def _build_fallback_storyboard(
             "frame_length": frame_len,
             "visual_action": beat_text,
             "dialogue_lines": dlgs,
-            "compiled_h3_prompt": "",
             "status": "pending",
-        })
+        }
+        seg_dict["compiled_h3_prompt"] = compile_segment_h3_prompt(seg_dict, roster, visual_style=visual_style)
+        segs.append(seg_dict)
     return segs

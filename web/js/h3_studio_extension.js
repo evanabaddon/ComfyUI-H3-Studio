@@ -794,9 +794,10 @@ function createNLEStudioWorkspace() {
           </div>
           <div style="display:flex; gap:4px; align-items:center;">
             <span class="h3-label">Chars:</span>
-            <input type="text" class="h3-input" data-sb="slots" value="${slotsStr}" title="Active Character Slot Numbers (e.g. 1, 2, 3)" style="width:46px; font-size:10px;" />
-            <input type="number" class="h3-input" data-sb="dur" min="3" max="15" step="0.5" value="${seg.duration_seconds || 8.0}" style="width:48px; font-size:10px;" />
-            <button type="button" class="h3-btn" data-sb="load-one" title="Load this segment into Single Deck &amp; Queue">Run</button>
+            <input type="text" class="h3-input" data-sb="slots" value="${slotsStr}" title="Active Character Slot Numbers (e.g. 1, 2, 3)" style="width:42px; font-size:10px;" />
+            <input type="number" class="h3-input" data-sb="dur" min="3" max="15" step="0.5" value="${seg.duration_seconds || 8.0}" style="width:46px; font-size:10px;" />
+            <button type="button" class="h3-btn" data-sb="toggle-prompt" title="View / Edit Compiled 6-Section H3 Prompt">H3 Prompt</button>
+            <button type="button" class="h3-btn h3-btn-primary" data-sb="load-one" title="Load this segment &amp; Queue in ComfyUI">Run</button>
             <button type="button" class="h3-btn h3-btn-danger" data-sb="del" style="padding:3px 6px;">X</button>
           </div>
         </div>
@@ -805,9 +806,22 @@ function createNLEStudioWorkspace() {
         </div>
         <div class="h3-item-row">
           <input type="text" class="h3-input" data-sb="spk" value="${firstDlg.speaker || "<Subject 1> (S1)"}" style="width:95px; font-size:10px;" />
-          <input type="text" class="h3-input" data-sb="dlg" value="${(firstDlg.text || "").replace(/"/g, "&quot;")}" placeholder="Spoken <d> dialogue in this segment (optional)..." style="flex:1;" />
+          <input type="text" class="h3-input" data-sb="dlg" value="${(firstDlg.text || "").replace(/"/g, "&quot;")}" placeholder="Spoken <d> dialogue in this segment..." style="flex:1;" />
+        </div>
+        <div data-sb="prompt-box" style="display:none; flex-direction:column; gap:4px; margin-top:4px;">
+          <span class="h3-label">FULL COMPILED 6-SECTION H3 PROMPT FOR SEG #${idx + 1}:</span>
+          <textarea class="h3-textarea" data-sb="compiled-prompt" style="min-height:110px; font-size:10px; font-family:var(--h3-font-mono);">${seg.compiled_h3_prompt || ""}</textarea>
         </div>
       `;
+
+      const elPromptBox = card.querySelector('[data-sb="prompt-box"]');
+      const elCompiledArea = card.querySelector('[data-sb="compiled-prompt"]');
+      card.querySelector('[data-sb="toggle-prompt"]').addEventListener("click", () => {
+        elPromptBox.style.display = elPromptBox.style.display === "none" ? "flex" : "none";
+      });
+      elCompiledArea.addEventListener("input", (e) => {
+        seg.compiled_h3_prompt = e.target.value;
+      });
 
       card.querySelector('[data-sb="transition"]').addEventListener("change", (e) => {
         seg.transition_type = e.target.value;
@@ -884,7 +898,7 @@ function createNLEStudioWorkspace() {
       });
     }
 
-    // 3. Populate H3AIPromptComposer with this segment's action, duration, and <d> dialogue
+    // 3. Populate H3AIPromptComposer with this segment's action, duration, <d> dialogue, and pre-compiled H3 prompt!
     elUserIdea.value = seg.visual_action || "";
     elDurationSec.value = String(seg.duration_seconds || 8.0);
     updateCalcBadge();
@@ -894,15 +908,21 @@ function createNLEStudioWorkspace() {
       if (promptNode._h3SetDialogueLines) {
         promptNode._h3SetDialogueLines(seg.dialogue_lines || [], elDialogueList);
       }
-      pushToCanvasPromptNode();
-      elStatusMsg.textContent = `[Storyboard Seg #${idx + 1}/${storyboardState.segments.length}] Compiling H3 prompt via Ollama...`;
-      await promptNode._h3TriggerOllamaGenerate((res) => {
-        if (res && res.prompt) {
-          seg.compiled_h3_prompt = res.prompt;
-          elCompiledPrompt.value = res.prompt;
-          pushToCanvasPromptNode();
-        }
-      }, seg.transition_type === "CONTINUE_FRAME" && idx > 0);
+      if (seg.compiled_h3_prompt && seg.compiled_h3_prompt.trim()) {
+        // Use the pre-generated 6-section H3 prompt for this episode segment immediately!
+        elCompiledPrompt.value = seg.compiled_h3_prompt;
+        pushToCanvasPromptNode();
+      } else {
+        pushToCanvasPromptNode();
+        elStatusMsg.textContent = `[Storyboard Seg #${idx + 1}/${storyboardState.segments.length}] Compiling H3 prompt via Ollama...`;
+        await promptNode._h3TriggerOllamaGenerate((res) => {
+          if (res && res.prompt) {
+            seg.compiled_h3_prompt = res.prompt;
+            elCompiledPrompt.value = res.prompt;
+            pushToCanvasPromptNode();
+          }
+        }, seg.transition_type === "CONTINUE_FRAME" && idx > 0);
+      }
     }
 
     // 4. Queue ComfyUI execution for this segment!
