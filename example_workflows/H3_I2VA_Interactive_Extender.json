@@ -1,6 +1,6 @@
 {
-  "last_node_id": 15,
-  "last_link_id": 22,
+  "last_node_id": 17,
+  "last_link_id": 25,
   "nodes": [
     {
       "id": 1,
@@ -88,18 +88,19 @@
       "mode": 0,
       "inputs": [
         {"name": "h3_ref_bundle", "type": "H3_REF_BUNDLE", "link": null},
-        {"name": "first_frame_image", "type": "IMAGE", "link": 18},
+        {"name": "first_frame_image", "type": "IMAGE", "link": null},
         {"name": "last_frame_image", "type": "IMAGE", "link": null},
-        {"name": "extender_context", "type": "H3_EXT_CTX", "link": 19}
+        {"name": "extender_context", "type": "H3_EXT_CTX", "link": null}
       ],
       "outputs": [
         {"name": "h3_prompt", "type": "STRING", "links": [8]},
         {"name": "frame_length_17k5", "type": "INT", "links": [9]},
         {"name": "effective_duration_sec", "type": "FLOAT", "links": null},
+        {"name": "first_frame_for_h3", "type": "IMAGE", "links": [17]},
         {"name": "resolved_mode", "type": "STRING", "links": null},
         {"name": "ai_status", "type": "STRING", "links": null}
       ],
-      "title": "6. H3 AI Prompt Composer (ollama.smixapp.com + <d>)",
+      "title": "6. H3 AI Prompt Composer (Wireless First-Frame Bridge + <d>)",
       "widgets_values": [
         "Seorang wanita muda duduk di dekat jendela kereta saat hujan malam hari, menatap lampu kota lalu berbicara pelan.",
         "Auto (Ref2VA if Characters ON, I2VA if First-Frame, else T2VA)",
@@ -187,7 +188,7 @@
       "flags": {},
       "order": 10,
       "mode": 0,
-      "outputs": [{"name": "NOISE", "type": "NOISE", "links": [20]}],
+      "outputs": [{"name": "NOISE", "type": "NOISE", "links": [18]}],
       "widgets_values": [42, "randomize"]
     },
     {
@@ -199,14 +200,14 @@
       "order": 11,
       "mode": 0,
       "inputs": [
-        {"name": "noise", "type": "NOISE", "link": 20},
+        {"name": "noise", "type": "NOISE", "link": 18},
         {"name": "guider", "type": "GUIDER", "link": 12},
         {"name": "sampler", "type": "SAMPLER", "link": 16},
         {"name": "sigmas", "type": "SIGMAS", "link": 15},
         {"name": "latent_image", "type": "LATENT", "link": 11}
       ],
       "outputs": [
-        {"name": "output", "type": "LATENT", "links": [21, 22]},
+        {"name": "output", "type": "LATENT", "links": [19, 20]},
         {"name": "denoised_output", "type": "LATENT", "links": null}
       ],
       "title": "8. H3 Joint Video+Audio Sampler"
@@ -220,10 +221,10 @@
       "order": 12,
       "mode": 0,
       "inputs": [
-        {"name": "samples", "type": "LATENT", "link": 21},
+        {"name": "samples", "type": "LATENT", "link": 19},
         {"name": "vae", "type": "VAE", "link": 13}
       ],
-      "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [23]}],
+      "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [21]}],
       "title": "Decode Video Frames"
     },
     {
@@ -235,10 +236,10 @@
       "order": 13,
       "mode": 0,
       "inputs": [
-        {"name": "samples", "type": "LATENT", "link": 22},
+        {"name": "samples", "type": "LATENT", "link": 20},
         {"name": "vae", "type": "VAE", "link": 14}
       ],
-      "outputs": [{"name": "AUDIO", "type": "AUDIO", "links": [24]}],
+      "outputs": [{"name": "AUDIO", "type": "AUDIO", "links": [22]}],
       "title": "Decode Stereo Audio (32kHz)"
     },
     {
@@ -250,14 +251,14 @@
       "order": 14,
       "mode": 0,
       "inputs": [
-        {"name": "images", "type": "IMAGE", "link": 23},
-        {"name": "audio", "type": "AUDIO", "link": 24}
+        {"name": "images", "type": "IMAGE", "link": 21},
+        {"name": "audio", "type": "AUDIO", "link": 22}
       ],
       "outputs": [
-        {"name": "reference_frame", "type": "IMAGE", "links": [17, 18]},
-        {"name": "stitched_images", "type": "IMAGE", "links": [25]},
-        {"name": "stitched_audio", "type": "AUDIO", "links": [26]},
-        {"name": "extender_context", "type": "H3_EXT_CTX", "links": [19]},
+        {"name": "reference_frame", "type": "IMAGE", "links": null},
+        {"name": "stitched_images", "type": "IMAGE", "links": [23]},
+        {"name": "stitched_audio", "type": "AUDIO", "links": [24]},
+        {"name": "extender_context", "type": "H3_EXT_CTX", "links": null},
         {"name": "total_frames", "type": "INT", "links": null}
       ],
       "title": "9. H3 Interactive Video & Audio Extender (Editor)",
@@ -272,10 +273,10 @@
       "order": 15,
       "mode": 0,
       "inputs": [
-        {"name": "images", "type": "IMAGE", "link": 25},
-        {"name": "audio", "type": "AUDIO", "link": 26}
+        {"name": "images", "type": "IMAGE", "link": 23},
+        {"name": "audio", "type": "AUDIO", "link": 24}
       ],
-      "outputs": [{"name": "VIDEO", "type": "VIDEO", "links": [27]}],
+      "outputs": [{"name": "VIDEO", "type": "VIDEO", "links": [25]}],
       "widgets_values": [24, 8]
     },
     {
@@ -286,7 +287,7 @@
       "flags": {},
       "order": 16,
       "mode": 0,
-      "inputs": [{"name": "video", "type": "VIDEO", "link": 27}],
+      "inputs": [{"name": "video", "type": "VIDEO", "link": 25}],
       "widgets_values": ["video/MiniMax_H3_Stitched", "auto", "auto"]
     }
   ],
@@ -307,17 +308,15 @@
     [14, 4, 0, 14, 1, "VAE"],
     [15, 9, 0, 12, 3, "SIGMAS"],
     [16, 10, 0, 12, 2, "SAMPLER"],
-    [17, 15, 0, 7, 2, "IMAGE"],
-    [18, 15, 0, 6, 1, "IMAGE"],
-    [19, 15, 3, 6, 3, "H3_EXT_CTX"],
-    [20, 11, 0, 12, 0, "NOISE"],
-    [21, 12, 0, 13, 0, "LATENT"],
-    [22, 12, 0, 14, 0, "LATENT"],
-    [23, 13, 0, 15, 0, "IMAGE"],
-    [24, 14, 0, 15, 1, "AUDIO"],
-    [25, 15, 1, 16, 0, "IMAGE"],
-    [26, 15, 2, 16, 1, "AUDIO"],
-    [27, 16, 0, 17, 0, "VIDEO"]
+    [17, 6, 3, 7, 2, "IMAGE"],
+    [18, 11, 0, 12, 0, "NOISE"],
+    [19, 12, 0, 13, 0, "LATENT"],
+    [20, 12, 0, 14, 0, "LATENT"],
+    [21, 13, 0, 15, 0, "IMAGE"],
+    [22, 14, 0, 15, 1, "AUDIO"],
+    [23, 15, 1, 16, 0, "IMAGE"],
+    [24, 15, 2, 16, 1, "AUDIO"],
+    [25, 16, 0, 17, 0, "VIDEO"]
   ],
   "groups": [],
   "config": {},

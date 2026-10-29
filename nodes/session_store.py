@@ -422,7 +422,8 @@ class SessionStore:
         os.makedirs(base_temp, exist_ok=True)
         self.base_temp = base_temp
         self.sessions: Dict[str, NodeSessionState] = {}
-        self.character_previews: Dict[str, Dict[str, str]] = {}
+        self.character_previews: Dict[str, Dict[str, Any]] = {}
+        self.latest_session_id: Optional[str] = None
 
     @classmethod
     def get(cls) -> "SessionStore":
@@ -433,9 +434,24 @@ class SessionStore:
 
     def get_node_session(self, node_id: str) -> NodeSessionState:
         nid = str(node_id)
+        if nid == "latest" and self.latest_session_id and self.latest_session_id in self.sessions:
+            return self.sessions[self.latest_session_id]
         if nid not in self.sessions:
             self.sessions[nid] = NodeSessionState(nid, self.base_temp)
+        self.latest_session_id = nid
         return self.sessions[nid]
+
+    def get_active_or_latest_session(self, timeline_id: str = "default") -> NodeSessionState:
+        tid = str(timeline_id).strip()
+        if tid and tid != "default" and tid in self.sessions:
+            return self.sessions[tid]
+        if self.latest_session_id and self.latest_session_id in self.sessions:
+            return self.sessions[self.latest_session_id]
+        # Fallback: return any session that has segments, or create "default"
+        for s in self.sessions.values():
+            if len(s.segments) > 0:
+                return s
+        return self.get_node_session("default")
 
 
 def compute_tensor_signature(images: Any) -> str:

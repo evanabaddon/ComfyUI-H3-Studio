@@ -8,7 +8,7 @@ from .ollama_client import (
     generate_h3_prompt_via_ollama,
     sanitize_dialogue_tags,
 )
-from .session_store import compute_h3_frame_length, tensor_to_base64_jpeg
+from .session_store import SessionStore, compute_h3_frame_length, tensor_to_base64_jpeg
 
 
 H3_STYLE_EMBEDDINGS = [
@@ -107,17 +107,23 @@ class H3AIPromptComposer:
             },
         }
 
-    RETURN_TYPES = ("STRING", "INT", "FLOAT", "STRING", "STRING")
+    RETURN_TYPES = ("STRING", "INT", "FLOAT", "IMAGE", "STRING", "STRING")
     RETURN_NAMES = (
         "h3_prompt",
         "frame_length_17k5",
         "effective_duration_sec",
+        "first_frame_for_h3",
         "resolved_mode",
         "ai_status",
     )
     FUNCTION = "compose_prompt"
     CATEGORY = "MiniMax-H3 Studio/AI Prompting (Ollama)"
     OUTPUT_NODE = True
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs) -> Any:
+        session = SessionStore.get().get_active_or_latest_session()
+        return f"{session.get_total_active_frames()}_{session.locked_ref_segment_idx}_{session.locked_ref_local_frame}_{kwargs.get('user_idea')}_{kwargs.get('mode')}_{kwargs.get('duration_seconds')}_{kwargs.get('dialogue_lines_json')}_{kwargs.get('generated_h3_prompt')}"
 
     def compose_prompt(
         self,
@@ -140,10 +146,19 @@ class H3AIPromptComposer:
         # 1. Calculate valid H3 frame length (17k + 5 at 24fps)
         frame_length, effective_sec = compute_h3_frame_length(duration_seconds, fps=24.0)
 
+        # Wireless First-Frame Bridge: if no explicit first_frame_image wire is connected,
+        # automatically pull the locked reference frame from the H3InteractiveVideoExtender session store!
+        # This avoids ComfyUI "Circular node connection" DAG errors while seamlessly chaining segments.
+        effective_first_frame = first_frame_image
+        if effective_first_frame is None:
+            ext_session = SessionStore.get().get_active_or_latest_session()
+            if ext_session.get_total_active_frames() > 0:
+                effective_first_frame = ext_session.get_reference_frame_tensor()
+
         # 2. Resolve effective H3 mode
         has_ref_chars = bool(h3_ref_bundle and h3_ref_bundle.get("enabled", False))
         has_ff = (
-            first_frame_image is not None
+            effective_first_frame is not None
             or bool(extender_context and extender_context.get("has_segments"))
             or bool(h3_ref_bundle and h3_ref_bundle.get("has_first_frame_anchor"))
         )
@@ -183,14 +198,14 @@ class H3AIPromptComposer:
                     "h3_frame_length": [frame_length],
                     "h3_effective_sec": [effective_sec],
                 },
-                "result": (final_prompt, frame_length, effective_sec, resolved_mode, status),
+                "result": (final_prompt, frame_length, effective_sec, effective_first_frame, resolved_mode, status),
             }
 
         # 5. Collect base64 thumbnails for Vision LLM if enabled
         vision_b64_list: List[str] = []
         if send_vision_images:
-            if first_frame_image is not None:
-                b64_ff = tensor_to_base64_jpeg(first_frame_image, index=0, max_side=512)
+            if effective_first_frame is not None:
+                b64_ff = tensor_to_base64_jpeg(effective_first_frame, index=0, max_side=512)
                 if b64_ff:
                     vision_b64_list.append(b64_ff)
             elif extender_context and extender_context.get("reference_frame_b64"):
@@ -227,5 +242,5 @@ class H3AIPromptComposer:
                 "h3_frame_length": [frame_length],
                 "h3_effective_sec": [effective_sec],
             },
-            "result": (final_prompt, frame_length, effective_sec, resolved_mode, status),
+            "result": (final_prompt, frame_length, effective_sec, effective_first_frame, resolved_mode, status),
         }

@@ -43,11 +43,11 @@ class H3CharacterReferenceHub:
         return {
             "required": {
                 "use_character_refs": ("BOOLEAN", {"default": True}),
-                "include_first_frame_as_picture_1": ("BOOLEAN", {"default": True}),
+                "auto_fetch_extender_first_frame": ("BOOLEAN", {"default": True}),
                 "characters_config_json": ("STRING", {"default": DEFAULT_CHARACTERS_JSON, "multiline": False}),
             },
             "optional": {
-                "first_frame_from_extender": ("IMAGE",),
+                "first_frame_override": ("IMAGE",),
                 "char_1_image": ("IMAGE",),
                 "char_2_image": ("IMAGE",),
                 "char_3_image": ("IMAGE",),
@@ -89,12 +89,17 @@ class H3CharacterReferenceHub:
     FUNCTION = "build_reference_bundle"
     CATEGORY = "MiniMax-H3 Studio/Characters & References"
 
+    @classmethod
+    def IS_CHANGED(cls, **kwargs) -> Any:
+        session = SessionStore.get().get_active_or_latest_session()
+        return f"{session.get_total_active_frames()}_{session.locked_ref_segment_idx}_{session.locked_ref_local_frame}_{kwargs.get('use_character_refs')}_{kwargs.get('auto_fetch_extender_first_frame')}_{kwargs.get('characters_config_json')}"
+
     def build_reference_bundle(
         self,
         use_character_refs: bool = True,
-        include_first_frame_as_picture_1: bool = True,
+        auto_fetch_extender_first_frame: bool = True,
         characters_config_json: str = DEFAULT_CHARACTERS_JSON,
-        first_frame_from_extender: Optional[Any] = None,
+        first_frame_override: Optional[Any] = None,
         char_1_image: Optional[Any] = None,
         char_2_image: Optional[Any] = None,
         char_3_image: Optional[Any] = None,
@@ -128,10 +133,18 @@ class H3CharacterReferenceHub:
         active_characters_meta: List[Dict[str, Any]] = []
         ui_preview_cards: List[Dict[str, Any]] = []
 
+        # Wireless First-Frame Bridge: if no explicit override wire is connected and auto_fetch_extender_first_frame is True,
+        # pull the locked reference frame directly from the H3InteractiveVideoExtender session store (prevents DAG cycle errors!).
+        effective_first_frame = first_frame_override
+        if effective_first_frame is None and auto_fetch_extender_first_frame:
+            ext_session = SessionStore.get().get_active_or_latest_session()
+            if ext_session.get_total_active_frames() > 0:
+                effective_first_frame = ext_session.get_reference_frame_tensor()
+
         has_ff_anchor = False
-        if use_character_refs and include_first_frame_as_picture_1 and first_frame_from_extender is not None:
-            ordered_images.append(first_frame_from_extender)
-            b64_ff = tensor_to_base64_jpeg(first_frame_from_extender, index=0, max_side=512)
+        if auto_fetch_extender_first_frame and effective_first_frame is not None:
+            ordered_images.append(effective_first_frame)
+            b64_ff = tensor_to_base64_jpeg(effective_first_frame, index=0, max_side=512)
             if b64_ff:
                 base64_thumbnails.append(b64_ff)
             has_ff_anchor = True
