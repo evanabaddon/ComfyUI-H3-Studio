@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from .session_store import SessionStore, tensor_to_base64_jpeg
+from .character_maker_node import load_saved_character_image_tensor
 
 
 DEFAULT_CHARACTERS_JSON = json.dumps(
@@ -197,6 +198,9 @@ class H3CharacterReferenceHub:
         for s_num in sorted(config_by_slot.keys()):
             cfg = config_by_slot[s_num]
             img_tensor = slot_images.get(s_num)
+            saved_lib_id = str(cfg.get("saved_character_id", "")).strip()
+            if img_tensor is None and saved_lib_id:
+                img_tensor = load_saved_character_image_tensor(saved_lib_id)
             aud_dict = slot_audios.get(s_num)
             is_enabled = bool(cfg.get("enabled", True))
             thumb_b64 = tensor_to_base64_jpeg(img_tensor, index=0, max_side=384) if img_tensor is not None else None

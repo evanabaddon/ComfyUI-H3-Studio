@@ -91,7 +91,8 @@ function createNLEStudioWorkspace() {
         </div>
         <div class="h3-nle-topbar-actions">
           <button type="button" class="h3-btn" data-nle="load-i2v">Load I2VA Workflow</button>
-          <button type="button" class="h3-btn" data-nle="load-ref2v">Load Ref2VA Multi-Char Workflow</button>
+          <button type="button" class="h3-btn" data-nle="load-ref2v">Load Ref2VA Multi-Char</button>
+          <button type="button" class="h3-btn h3-btn-accent" data-nle="load-charmaker" title="Open H3 360° Character Sheet Maker Workflow (from Real Face Photo)">Load Character Maker</button>
           <button type="button" class="h3-btn h3-btn-primary" data-nle="queue-now">Queue Generation in ComfyUI</button>
           <button type="button" class="h3-btn h3-btn-danger" data-nle="close-modal">Close [Esc]</button>
         </div>
@@ -652,6 +653,12 @@ function createNLEStudioWorkspace() {
   backdrop.querySelector('[data-nle="load-ref2v"]').addEventListener("click", async () => {
     await loadBundledWorkflow("H3_Ref2VA_MultiCharacter_Studio.json");
     setTimeout(pullFromCanvasNodes, 250);
+  });
+
+  backdrop.querySelector('[data-nle="load-charmaker"]').addEventListener("click", async () => {
+    await loadBundledWorkflow("H3_Character_Sheet_Maker.json");
+    setTimeout(pullFromCanvasNodes, 250);
+    elStatusMsg.textContent = "Loaded H3 Character Sheet Maker workflow — upload a real face photo in LoadImage and Queue!";
   });
 
   backdrop.querySelector('[data-nle="queue-now"]').addEventListener("click", () => {
@@ -1632,8 +1639,23 @@ function setupModelLoraNodeUI(node) {
 }
 
 // ============================================================================
-// 3. H3CharacterReferenceHub Canvas Node UI
+// 3. H3CharacterReferenceHub Canvas Node UI + Character Library Loader
 // ============================================================================
+let cachedSavedCharacters = [];
+
+async function fetchSavedCharacterLibrary() {
+  try {
+    const resp = await api.fetchApi("/h3_studio/characters/library");
+    if (resp.ok) {
+      const data = await resp.json();
+      if (Array.isArray(data.characters)) {
+        cachedSavedCharacters = data.characters;
+      }
+    }
+  } catch (e) {}
+  return cachedSavedCharacters;
+}
+
 function setupCharacterHubNodeUI(node) {
   const wCharsJson = hideBackingWidget(node, "characters_config_json");
 
@@ -1646,11 +1668,12 @@ function setupCharacterHubNodeUI(node) {
         <span class="h3-badge h3-badge-green" data-role="active-chars-badge">1 ON</span>
       </div>
       <div style="display:flex; gap:4px;">
+        <button type="button" class="h3-btn" data-action="sync-lib" title="Refresh Saved Character Library">Lib</button>
         <button type="button" class="h3-btn h3-btn-primary" data-action="add-char">+ Add Char</button>
         <button type="button" class="h3-btn" data-action="open-nle">Studio View</button>
       </div>
     </div>
-    <div class="h3-list-container" data-role="char-list" style="max-height:280px;"></div>
+    <div class="h3-list-container" data-role="char-list" style="max-height:295px;"></div>
   `;
 
   const elCharList = panel.querySelector('[data-role="char-list"]');
@@ -1666,6 +1689,7 @@ function setupCharacterHubNodeUI(node) {
       speaker_id: "S1",
       voice_desc: "clear youthful female voice, natural conversational pace",
       use_audio_ref: true,
+      saved_character_id: "",
     },
     {
       slot: 2,
@@ -1676,6 +1700,7 @@ function setupCharacterHubNodeUI(node) {
       speaker_id: "S2",
       voice_desc: "calm warm male voice, steady cadence",
       use_audio_ref: false,
+      saved_character_id: "",
     },
     {
       slot: 3,
@@ -1686,6 +1711,7 @@ function setupCharacterHubNodeUI(node) {
       speaker_id: "S3",
       voice_desc: "",
       use_audio_ref: false,
+      saved_character_id: "",
     },
     {
       slot: 4,
@@ -1696,6 +1722,7 @@ function setupCharacterHubNodeUI(node) {
       speaker_id: "S4",
       voice_desc: "",
       use_audio_ref: false,
+      saved_character_id: "",
     },
   ];
 
@@ -1720,6 +1747,19 @@ function setupCharacterHubNodeUI(node) {
     charConfigs.forEach((cfg, idx) => {
       if (cfg.enabled) activeSubjectIdx += 1;
       const subjLabel = cfg.enabled ? `<Subject ${activeSubjectIdx}>` : "OFF";
+      const savedLibId = cfg.saved_character_id || "";
+
+      const libOptionsHtml = [
+        `<option value="">-- Wire Input / Manual --</option>`,
+        ...cachedSavedCharacters.map(
+          (libChar) =>
+            `<option value="${libChar.character_id}" ${libChar.character_id === savedLibId ? "selected" : ""}>[Sheet] ${libChar.name} (${libChar.character_id})</option>`
+        ),
+      ].join("");
+
+      const thumbUrl = savedLibId
+        ? api.apiURL(`/h3_studio/characters/sheet/${encodeURIComponent(savedLibId)}`)
+        : "";
 
       const card = document.createElement("div");
       card.className = "h3-item-card" + (cfg.enabled ? "" : " disabled");
@@ -1736,6 +1776,17 @@ function setupCharacterHubNodeUI(node) {
             <span class="h3-label">Spk:</span>
             <input type="text" class="h3-input" data-field="speaker_id" value="${cfg.speaker_id || `S${idx + 1}`}" style="width:34px;" />
           </div>
+        </div>
+        <div class="h3-item-row">
+          <span class="h3-label">Char Lib:</span>
+          <select class="h3-select" data-field="saved_character_id" style="flex:1; font-size:10px;">
+            ${libOptionsHtml}
+          </select>
+          ${
+            thumbUrl
+              ? `<img src="${thumbUrl}" alt="Sheet" title="Loaded 360° Character Sheet from Library" style="width:36px; height:24px; object-fit:cover; border-radius:3px; border:1px solid var(--h3-amber);" />`
+              : ""
+          }
         </div>
         <div class="h3-item-row">
           <input type="text" class="h3-input" data-field="visual_traits" value="${cfg.visual_traits || ""}" placeholder="Visual appearance traits (<Subject N>)..." style="flex:1;" />
@@ -1757,6 +1808,21 @@ function setupCharacterHubNodeUI(node) {
 
       card.querySelector('[data-field="enabled"]').addEventListener("change", (e) => {
         cfg.enabled = e.target.checked;
+        renderCharCardsInto(elCharList);
+        if (targetContainer !== elCharList) renderCharCardsInto(targetContainer, badgeOverride);
+      });
+      card.querySelector('[data-field="saved_character_id"]').addEventListener("change", (e) => {
+        const chosenId = e.target.value;
+        cfg.saved_character_id = chosenId;
+        if (chosenId) {
+          const found = cachedSavedCharacters.find((c) => c.character_id === chosenId);
+          if (found) {
+            cfg.enabled = true;
+            if (found.name) cfg.name = found.name;
+            if (found.visual_traits) cfg.visual_traits = found.visual_traits;
+            if (found.voice_desc) cfg.voice_desc = found.voice_desc;
+          }
+        }
         renderCharCardsInto(elCharList);
         if (targetContainer !== elCharList) renderCharCardsInto(targetContainer, badgeOverride);
       });
@@ -1791,7 +1857,10 @@ function setupCharacterHubNodeUI(node) {
     syncCharWidget(badgeOverride);
   }
 
-  node._h3RenderNLEChars = renderCharCardsInto;
+  node._h3RenderNLEChars = async (extContainer, extBadge) => {
+    await fetchSavedCharacterLibrary();
+    renderCharCardsInto(extContainer, extBadge);
+  };
   node._h3GetCharConfigs = () => charConfigs;
   node._h3AddCharacterSlot = (extContainer, extBadge) => {
     const nextSlot = charConfigs.length + 1;
@@ -1804,6 +1873,7 @@ function setupCharacterHubNodeUI(node) {
       speaker_id: `S${nextSlot}`,
       voice_desc: "natural expressive voice",
       use_audio_ref: false,
+      saved_character_id: "",
     });
     renderCharCardsInto(elCharList);
     if (extContainer && extContainer !== elCharList) {
@@ -1822,6 +1892,11 @@ function setupCharacterHubNodeUI(node) {
     }
   };
 
+  panel.querySelector('[data-action="sync-lib"]').addEventListener("click", async () => {
+    await fetchSavedCharacterLibrary();
+    renderCharCardsInto(elCharList);
+  });
+
   panel.querySelector('[data-action="add-char"]').addEventListener("click", () => {
     node._h3AddCharacterSlot();
   });
@@ -1834,9 +1909,11 @@ function setupCharacterHubNodeUI(node) {
     serialize: false,
     hideOnZoom: false,
   });
-  node.setSize([440, 490]);
+  node.setSize([450, 520]);
 
-  renderCharCardsInto(elCharList);
+  fetchSavedCharacterLibrary().then(() => {
+    renderCharCardsInto(elCharList);
+  });
 }
 
 // ============================================================================
@@ -2126,6 +2203,63 @@ function setupPromptComposerNodeUI(node) {
 }
 
 // ============================================================================
+// 5. H3CharacterSheetStitcherAndSaver Canvas Node UI
+// ============================================================================
+function setupCharacterSheetStitcherUI(node) {
+  const panel = document.createElement("div");
+  panel.className = "h3-studio-panel";
+  panel.innerHTML = `
+    <div class="h3-studio-header">
+      <div class="h3-studio-title">
+        <span>360° CHARACTER SHEET LIBRARY</span>
+        <span class="h3-badge h3-badge-green" data-role="sheet-badge">Ready</span>
+      </div>
+      <button type="button" class="h3-btn h3-btn-primary" data-action="open-nle">Open Studio NLE</button>
+    </div>
+    <div class="h3-viewport" style="height:210px;">
+      <div class="h3-viewport-empty" data-role="empty-msg">
+        Run workflow untuk mengekstrak 6-panel 360° Character Sheet dari video orbit dan menyimpannya ke Character Library.
+      </div>
+      <img data-role="sheet-img" style="display:none; width:100%; height:100%; object-fit:contain;" alt="Stitched Character Sheet" />
+    </div>
+    <div class="h3-status-bar">
+      <span data-role="status-text">Saved characters auto-appear in H3 Character Reference Hub &amp; NLE Studio</span>
+    </div>
+  `;
+
+  const elBadge = panel.querySelector('[data-role="sheet-badge"]');
+  const elEmpty = panel.querySelector('[data-role="empty-msg"]');
+  const elImg = panel.querySelector('[data-role="sheet-img"]');
+  const elStatus = panel.querySelector('[data-role="status-text"]');
+
+  panel.querySelector('[data-action="open-nle"]').addEventListener("click", () => {
+    createNLEStudioWorkspace().open();
+  });
+
+  node.addDOMWidget("h3_char_sheet_dom", "custom_dom", panel, {
+    serialize: false,
+    hideOnZoom: false,
+  });
+  node.setSize([440, 480]);
+
+  const origOnExecuted = node.onExecuted;
+  node.onExecuted = function (output) {
+    if (origOnExecuted) origOnExecuted.apply(this, arguments);
+    if (output && output.h3_saved_character && output.h3_saved_character[0]) {
+      const info = output.h3_saved_character[0];
+      if (info.character_id) {
+        elBadge.textContent = info.character_id;
+        elStatus.textContent = info.status || `Saved '${info.name}' to Character Library`;
+        elImg.src = api.apiURL(`/h3_studio/characters/sheet/${encodeURIComponent(info.character_id)}?t=${Date.now()}`);
+        elImg.style.display = "block";
+        elEmpty.style.display = "none";
+        fetchSavedCharacterLibrary();
+      }
+    }
+  };
+}
+
+// ============================================================================
 // Register Extension with ComfyUI (Supports both Legacy LiteGraph & Node 2.0)
 // ============================================================================
 app.registerExtension({
@@ -2148,6 +2282,9 @@ app.registerExtension({
     } else if (t === "H3AIPromptComposer" && !node._h3UiInitialized) {
       node._h3UiInitialized = true;
       setupPromptComposerNodeUI(node);
+    } else if (t === "H3CharacterSheetStitcherAndSaver" && !node._h3UiInitialized) {
+      node._h3UiInitialized = true;
+      setupCharacterSheetStitcherUI(node);
     }
   },
   async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -2187,6 +2324,15 @@ app.registerExtension({
         if (!this._h3UiInitialized) {
           this._h3UiInitialized = true;
           setupPromptComposerNodeUI(this);
+        }
+      };
+    } else if (nodeData.name === "H3CharacterSheetStitcherAndSaver") {
+      const origCreated = nodeType.prototype.onNodeCreated;
+      nodeType.prototype.onNodeCreated = function () {
+        if (origCreated) origCreated.apply(this, arguments);
+        if (!this._h3UiInitialized) {
+          this._h3UiInitialized = true;
+          setupCharacterSheetStitcherUI(this);
         }
       };
     }

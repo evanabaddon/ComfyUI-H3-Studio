@@ -10,6 +10,7 @@ import os
 from typing import Any, Dict
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+from .nodes.character_maker_node import CHARACTER_LIBRARY_DIR, _slugify_char_name, list_saved_characters
 from .nodes.model_lora_node import get_available_loras
 from .nodes.ollama_client import (
     DEFAULT_OLLAMA_MODEL,
@@ -211,6 +212,20 @@ try:
                 "total_planned_frames": total_planned_frames,
             }
         )
+
+    @routes.get("/h3_studio/characters/library")
+    async def api_get_character_library(request: "web.Request") -> "web.Response":
+        return web.json_response({"characters": list_saved_characters()})
+
+    @routes.get("/h3_studio/characters/sheet/{character_id}")
+    async def api_get_character_sheet_img(request: "web.Request") -> "web.Response":
+        char_id = _slugify_char_name(request.match_info.get("character_id", ""))
+        sheet_path = os.path.join(CHARACTER_LIBRARY_DIR, char_id, "sheet.png")
+        if not os.path.exists(sheet_path):
+            return web.Response(status=404, text="Character sheet not found")
+        with open(sheet_path, "rb") as f:
+            data = f.read()
+        return web.Response(body=data, content_type="image/png", headers={"Cache-Control": "no-store"})
 
     @routes.get("/h3_studio/workflows/{name}")
     async def api_get_workflow_template(request: "web.Request") -> "web.Response":
